@@ -1,0 +1,13 @@
+sdk-version: 3.4.0-rc2
+name: canton-network-credentials-demo
+source: daml
+version: 0.1.0
+build-options:
+  - --target=2.1
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+data-dependencies:
+  - ../../interfaces/.daml/dist/canton-network-credentials-interfaces-0.1.0.dar
+  - ../../../../canton/unlockit/lib/splice-api-token-metadata-v1-1.0.0.dar

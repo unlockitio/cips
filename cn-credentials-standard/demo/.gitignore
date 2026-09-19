@@ -1,0 +1,5 @@
+.env
+daml/.daml/
+java-api/target/
+*.dar
+*.log

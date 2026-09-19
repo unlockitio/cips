@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pqs}
+      POSTGRES_USER: ${POSTGRES_USER:-pqs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pqs-data:/var/lib/postgresql/data
+
+  canton:
+    image: digitalasset/daml-sdk:3.4.0-rc2
+    working_dir: /tmp
+    command:
+      - daml
+      - sandbox
+      - --port
+      - "6865"
+      - --json-api-port
+      - "7575"
+      - --config
+      - /workspace/config/sandbox.conf
+    volumes:
+      - ./:/workspace:ro
+    healthcheck:
+      test: ["CMD", "daml", "ledger", "list-parties", "--host", "localhost", "--port", "6865"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+    ports:
+      - "${LEDGER_PORT:-6865}:6865"
+
+  dar-upload:
+    image: digitalasset/daml-sdk:3.4.0-rc2
+    working_dir: /workspace
+    command: ["/workspace/scripts/upload-dar.sh"]
+    volumes:
+      - ./:/workspace:ro
+    depends_on:
+      canton:
+        condition: service_healthy
+
+  pqs:
+    image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.4.1
+    command: ["pipeline", "ledger", "postgres-document"]
+    environment:
+      SCRIBE_SOURCE_LEDGER_HOST: canton
+      SCRIBE_SOURCE_LEDGER_PORT: "6865"
+      SCRIBE_SOURCE_LEDGER_AUTH: NoAuth
+      SCRIBE_SOURCE_LEDGER_USER: participant_admin
+      SCRIBE_PIPELINE_LEDGER_START: Genesis
+      SCRIBE_PIPELINE_FILTER_PARTIES: "*"
+      SCRIBE_PIPELINE_FILTER_CONTRACTS: "*"
+      SCRIBE_PIPELINE_FILTER_METADATA: "*"
+      SCRIBE_TARGET_POSTGRES_HOST: postgres
+      SCRIBE_TARGET_POSTGRES_PORT: "5432"
+      SCRIBE_TARGET_POSTGRES_DATABASE: ${POSTGRES_DB:-pqs}
+      SCRIBE_TARGET_POSTGRES_USERNAME: ${POSTGRES_USER:-pqs}
+      SCRIBE_TARGET_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+      SCRIBE_HEALTH_ADDRESS: 0.0.0.0
+      SCRIBE_HEALTH_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dar-upload:
+        condition: service_completed_successfully
+    ports:
+      - "${PQS_HEALTH_PORT:-8081}:8080"
+
+  api:
+    build: ./java-api
+    environment:
+      API_PORT: "8080"
+      PQS_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pqs}
+      PQS_DB_USER: ${POSTGRES_USER:-pqs}
+      PQS_DB_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pqs:
+        condition: service_started
+    ports:
+      - "${API_PORT:-8080}:8080"
+
+volumes:
+  pqs-data:
