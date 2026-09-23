@@ -1,8 +1,8 @@
 # PQS SQL and optional indexes
 
-The API uses PQS reader functions, specifically `active(...)`, and does not query physical `__*` tables. Those tables are PQS implementation details and are not a stable reader API.
+The demo API uses the documented PQS `active(...)` reader for current active projections in the Credentials stack's private PostgreSQL 18.6 database; its queries select only credential interfaces and do not query physical `__*` tables. PostgreSQL is reachable only on `credential-network` and is not published to the host. Physical tables are PQS implementation details and are not a stable reader API. Current evidence does not establish a stable PQS SQL reader for inactive or archived projections, so the demo does not advertise inactive-record or event-history capabilities. A conforming implementation that advertises either capability must document its implementation-specific backing; event history uses the separate event operation and schema defined by the OpenAPI contract.
 
-PQS 3.4.1 exposes the supported payload-index procedure with this installed signature:
+PQS 3.5.8 exposes the supported payload-index procedure with this installed signature:
 
 ```text
 create_index_for_contract(
@@ -26,7 +26,7 @@ CALL create_index_for_contract(
 );
 ```
 
-The expression and unprefixed qualified name are validated against the 3.4.1 container and a live interface payload. The API combines the active `Credential` and `RegisteredCredential` projections by contract ID: the former carries intrinsic credential fields, while the latter carries registration metadata. Inspect the documented reader surface directly with:
+The expression and unprefixed qualified name are validated against the 3.5.8 container and a live interface payload. The API combines the active `Credential` and `RegisteredCredential` projections by contract ID: the former carries intrinsic credential fields, while the latter carries registration metadata. `RegisteredCredential` requires `Credential`; a registered result is valid only when both projections identify the same canonical contract. Registered renewal replaces both projections atomically under one replacement contract ID. Inspect the documented reader surface directly with:
 
 ```sql
 SELECT c.contract_id,
@@ -38,9 +38,9 @@ JOIN active('canton-network-credentials-interfaces:Canton.Network.Credentials.V1
 LIMIT 1;
 ```
 
-The credential payload has top-level `id`, `issuer`, `credentialTypes`, `credentialSubject`, `holders`, `validFrom`, and `validUntil` fields. The registration payload has a top-level `registration` field. `issuer` is an encoded `W3C_VC_Identifier` object, not scalar text.
+The PQS credential payload has top-level `id`, `issuer`, `credentialTypes`, `credentialSubject`, `holders`, `validFrom`, and `validUntil` fields. A W3C serialization maps `credentialTypes` to JSON-LD `type`; PQS retains the Daml field name. The RegisteredCredential payload has top-level `registryAdmin`, `registeredAt`, `expiresAt`, and `meta` fields. `validUntil` is intrinsic validity while `expiresAt` is registry retention; readers must keep them distinct even though the DSO profile sets them equal where both are present and renews them atomically. Natural expiry after `validUntil` creates no transaction. `issuer` is an encoded `W3C_VC_Identifier` object, not scalar text.
 
-The procedure is intentionally optional and demonstrates supported indexing rather than satisfying a performance requirement. During the partial live run with 36 projected credentials, an `EXPLAIN` of exact lookup used a bitmap scan over the generated expression index. The fresh full 300+ live validation remained blocked as documented in the demo README. No GIN index is installed because the API has no containment query.
+This particular procedure and PostgreSQL expression are optional implementation details. The standard instead requires logical indexes or equivalent access paths for exact credential ID, contract-ID association, deterministic credential-ID-plus-contract-ID ordering, and every advertised standard filter. Additional indexes are allowed. During an earlier partial live run with 36 projected credentials, an `EXPLAIN` of exact lookup used a bitmap scan over the generated expression index. The independent stack must be runtime-validated before release. No GIN index is installed because the demo API has no containment query.
 
 To inspect the installed reader/helper contract without relying on internal tables:
 

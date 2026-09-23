@@ -1,5 +1,22 @@
+# Environment and runtime state
 .env
-daml/.daml/
-java-api/target/
-*.dar
+!.env.example
+.runtime/
+log/
 *.log
+
+# Daml/DPM output and external binary dependencies
+**/.daml/
+**/.packages/
+**/.deps/
+*.dar
+
+# Java build output
+java-api/target/
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

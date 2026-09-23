@@ -6,8 +6,14 @@ COPY src src
 RUN mvn -B package
 
 FROM eclipse-temurin:21-jre
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /workspace/target/credential-registry-api.jar /app/api.jar
+COPY --from=build /workspace/target/quarkus-app/lib/ /app/lib/
+COPY --from=build /workspace/target/quarkus-app/*.jar /app/
+COPY --from=build /workspace/target/quarkus-app/app/ /app/app/
+COPY --from=build /workspace/target/quarkus-app/quarkus/ /app/quarkus/
 USER 65532:65532
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/api.jar"]
+ENTRYPOINT ["java", "-jar", "/app/quarkus-run.jar"]

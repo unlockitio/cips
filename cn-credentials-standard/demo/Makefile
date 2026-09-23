@@ -1,31 +1,59 @@
 SHELL := /bin/sh
+override COMPOSE_PROJECT_NAME := cn-credential-demo
+export COMPOSE_PROJECT_NAME
+COMPOSE := docker compose
 
-.PHONY: build daml-test demo-index up seed smoke-test down clean
-
-build:
-	cd ../interfaces && daml build
-	cd daml && daml build
-	docker compose build api
-
-daml-test:
-	cd daml && daml script --dar .daml/dist/canton-network-credentials-demo-0.1.0.dar --script-name Canton.Network.Credentials.Tests:main --ledger-host localhost --ledger-port "$${LEDGER_PORT:-6865}" --upload-dar yes
-
-demo-index:
-	docker compose exec -T postgres psql -U "$${POSTGRES_USER:-pqs}" -d "$${POSTGRES_DB:-pqs}" -c "call create_index_for_contract('credential_id_idx', 'canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential', '(payload ->> ''id'')', 'btree', 'text_ops');"
+.PHONY: up build daml-build daml-test java-test e2e ps logs logs-canton logs-pqs logs-credentials-api seed projection-check credentials-smoke-test smoke-test down reset
 
 up:
-	docker compose up -d postgres canton pqs api
+	$(COMPOSE) up --build
+
+build: daml-build java-test
+	$(COMPOSE) build
+
+daml-build:
+	./scripts/fetch-dependencies.sh
+	dpm build --all
+
+daml-test: daml-build
+	cd test && dpm test
+
+java-test:
+	cd java-api && mvn test
 
 seed:
-	./scripts/seed.sh
+	$(COMPOSE) run --rm credential-seed
 
-smoke-test:
+projection-check:
+	$(COMPOSE) run --rm credential-projection-waiter
+
+credentials-smoke-test:
 	./scripts/smoke-test.sh
 
-down:
-	docker compose down
+smoke-test: credentials-smoke-test
 
-clean:
-	cd daml && daml clean
-	cd ../interfaces && daml clean
-	cd java-api && mvn clean
+e2e:
+	./scripts/e2e.sh
+
+ps:
+	$(COMPOSE) ps -a
+
+logs:
+	$(COMPOSE) logs
+
+logs-canton:
+	$(COMPOSE) logs credential-canton
+
+logs-pqs:
+	$(COMPOSE) logs credential-pqs
+
+logs-credentials-api:
+	$(COMPOSE) logs credential-api
+
+down:
+	$(COMPOSE) down
+
+reset:
+	@printf '%s\n' 'WARNING: reset removes only cn-credential-demo containers, network, and volumes.'
+	@printf '%s' 'Type RESET-CREDENTIAL-DEMO to continue: '; read answer; [ "$$answer" = 'RESET-CREDENTIAL-DEMO' ]
+	$(COMPOSE) down --volumes

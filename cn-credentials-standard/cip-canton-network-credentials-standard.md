@@ -22,7 +22,7 @@ This CIP consists of two generic layers, presented in dependency order:
 
 1. **Credential Contract and Registry Standards** defines two distinct surfaces:
    * the **Base Credential Contract Standard**, for intrinsic credentials that can exist and be used without a registry; and
-   * the **Credential Registry Interface and API Standard**, a registry capability built on the base interface, with registry-specific metadata, lifecycle operations, read-only HTTP APIs, and visibility semantics. A conforming registry keeps its backend and APIs within the same responsibility boundary so consumers do not depend on its storage implementation.
+   * the **Credential Registry Interface and API Standard**, a registry capability built on the base interface, with registry-specific metadata and lifecycle operations plus access-policy-neutral read-only HTTP APIs for exposed credential records. A conforming registry keeps its backend and APIs within the same responsibility boundary so consumers do not depend on its storage implementation.
 2. **Application and Metadata Discovery** standardizes discoverable declarations for applications and services, including credential registries. Through namespaced properties on credential subjects, these declarations describe what is available, where its endpoints are, which capabilities or metadata it supports, and how clients interact with it. Layer 2 defines how a client that knows an identity, party, or application context can find compatible services and the information needed to invoke them. This CIP uses the Credential Registry Interface and API Standard as the current mechanism for publishing and resolving the declarations, while registries themselves can be discoverable services. The off-ledger Asset Registry API discovery requirements in CIP-56 inform this layer's reusable discovery mechanism.
 
 The standard supports three deployment modes:
@@ -33,13 +33,13 @@ The standard supports three deployment modes:
 
 ### Architecture Overview (Non-Normative)
 
-The System Context view treats the Canton Network Credentials Standard as one system and shows only its people and external-system relationships. Internal interfaces and deployment components are intentionally deferred to the Container view. Credential issuance remains the responsibility of issuer-specific software. Private issuance applications support direct or restricted workflows without requiring registry publication; public issuance applications add registration for credentials intended to be publicly discoverable. Issuers identify the assessment policy under which they issue credentials. App Users use both app or wallet providers and network explorers as separate applications: wallets may support holder workflows, while explorers expose only publicly visible registered credentials and discovery metadata. Using a public explorer does not imply ledger Party authority. Issuers and holders may also use these applications. Entities may act in multiple roles. For example, a bank can issue credentials to its customers while also holding credentials issued to it by regulators.
+The System Context view treats the Canton Network Credentials Standard as one system and shows only its people and external-system relationships. Internal interfaces and deployment components are intentionally deferred to the Container view. Credential issuance remains the responsibility of issuer-specific software. Issuance applications can support direct workflows without registry publication or can add registration and HTTP exposure under deployment-defined access policy. Issuers identify the assessment policy under which they issue credentials. App Users use both app or wallet providers and network explorers as separate applications: wallets may support holder workflows, while explorers consume credential records and history exposed to them by a deployment. Using an explorer does not imply ledger Party authority. Issuers and holders may also use these applications. Entities may act in multiple roles. For example, a bank can issue credentials to its customers while also holding credentials issued to it by regulators.
 
-![System context showing the Canton Network Credentials Standard as one system used through private and public credential issuance applications, an app or wallet provider, and a network explorer limited to public registrations and discovery metadata, with the DSO Party collectively controlled by all SVs administering and operating the DSO instance.](images/credentials-system-context.png)
+![System context showing the Canton Network Credentials Standard as one system used through credential issuance applications, an app or wallet provider, and a network explorer consuming deployment-exposed records and history, with the DSO Party collectively controlled by all SVs administering and operating the DSO instance.](images/credentials-system-context.png)
 
 *System Context for the Canton Network Credentials Standard and its external actors. [C4-PlantUML source](images/credentials-system-context.puml).*
 
-The System Context is a simplification that separates public and private issuance capabilities for clarity; these labels describe roles, not required deployment boundaries. One issuance application or registry-facing deployment may implement either capability or both, provided public issuance exposes registry-visible material according to the applicable profile and private issuance preserves the applicable visibility, authorization, and privacy rules.
+The System Context is a simplification that separates direct issuance from registry-facing issuance for clarity; these labels describe roles, not required deployment boundaries or Layer 1 access classifications. One issuance application or registry-facing deployment may implement either capability or both. Each deployment defines whether and how credential records are exposed, including filtering, authentication, authorization, and audience.
 
 The System Context elements below identify the people and external systems shown in the diagram.
 
@@ -47,13 +47,13 @@ The System Context elements below identify the people and external systems shown
 | --- | --- | --- |
 | Credential Issuer | Person | Organization or individual acting in the issuer role. |
 | Credential Holder | Person | Party acting in the holder role. |
-| App User | Person | User of credential applications, wallets, and network explorers; using a public explorer does not imply ledger Party authority. |
+| App User | Person | User of credential applications, wallets, and network explorers; using an explorer does not imply ledger Party authority. |
 | Canton Network Credentials Standard | System | The single in-scope system for portable credentials, registration, discovery, and the DSO deployment profile. |
-| Private Credential Issuance Application | External system | Issuer-specific software for direct or restricted issuance and holder workflows. |
-| Public Credential Issuance Application | External system | Issuer-specific software for registered credentials; the promoted DSO deployment profile is a concrete instance. |
+| Direct Credential Issuance Application | External system | Issuer-specific software for issuance and holder workflows without required registry publication. |
+| Registry-facing Credential Issuance Application | External system | Issuer-specific software that adds registration or HTTP exposure; the promoted DSO deployment profile is a concrete instance. |
 | App / Wallet Provider | External system | Application or wallet that handles credentials for issuers, holders, and app users. |
-| Network Explorer | External system | Explorer limited to publicly visible registered credentials and discovery metadata. |
-| DSO Party / SV Governance | Person | The DSO Party, collectively controlled by all SVs, acting as administrator and operator of the DSO Credential Registry used by the promoted public issuance deployment. |
+| Network Explorer | External system | Explorer that consumes credential records, lifecycle information, and discovery metadata exposed to it under deployment policy. |
+| DSO Party / SV Governance | Person | The DSO Party, collectively controlled by all SVs, acting as administrator and operator of the DSO Credential Registry. |
 
 #### Credential Registry Reference Application (DSO-managed)
 
@@ -67,7 +67,7 @@ Layer 1 defines Daml interfaces for the base `Credential`, `RegisteredCredential
 
 #### Daml Interfaces
 
-The three candidate Daml interfaces are `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`. Their candidate definitions are checked in at [`interfaces/daml/Canton/Network/Credentials/V1.daml`](interfaces/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`interfaces/README.md`](interfaces/README.md); concrete templates, package naming for standardization, and signatories remain outside that source.
+The three candidate Daml interfaces are `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`. Their candidate definitions are checked in at [`demo/interface/daml/Canton/Network/Credentials/V1.daml`](demo/interface/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`demo/interface/README.md`](demo/interface/README.md); concrete templates, package naming for standardization, and signatories remain outside that source.
 
 ##### Credential Interface
 
@@ -90,20 +90,18 @@ Field position and explicit Daml authority keep identity and operational roles i
 
 In practice, clients use the typed fields according to their declared roles, and templates authorize operations explicitly. Implementations MUST NOT scan credential identifiers, claims, nested `AnyValue`, or other payload content to infer subjects, holders, controllers, or authorization.
 
-The schema of base credentials is adapted from the [Draft PR](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-808147bf36f1c087a42b92d67d2021c2ca203076cc0e3b6a31f2ccc60497a34d). The core view contains the intrinsic credential fields and Canton holder metadata described below.
-
 **Table 1. Core `CredentialView` fields**
 
   | CredentialView field | W3C VC Data Model 2.0 concept | External serialization | Canton semantics |
   | --- | --- | --- | --- |
   | `CredentialView.id : Optional Text` | Credential [`id`](https://www.w3.org/TR/vc-data-model-2.0/#identifiers) | Profile-defined URL when present | Semantic correspondence; the Daml value requires profile mapping. |
-  | `CredentialView.credentialTypes : [Text]` | [`type`](https://www.w3.org/TR/vc-data-model-2.0/#types) | JSON-LD `type` values | Credential type values carried by the view. |
+  | `CredentialView.credentialTypes : [Text]` | W3C [`type`](https://www.w3.org/TR/vc-data-model-2.0/#types) | Serialize as JSON-LD `type` values | A W3C-exportable representation MUST include `VerifiableCredential` among the values. |
   | `CredentialView.issuer : W3C_VC_Identifier` | [`issuer`](https://www.w3.org/TR/vc-data-model-2.0/#issuer) | Identifier selected by the ADT variant | Issuer identity retains its field-specific role. |
-  | `CredentialView.validFrom : Optional Time`; `CredentialView.validUntil : Optional Time` | [`validFrom`, `validUntil`](https://www.w3.org/TR/vc-data-model-2.0/#validity-period) | Profile-defined date-time representation | Start of validity and optional end of validity. |
+  | `CredentialView.validFrom : Optional Time`; `CredentialView.validUntil : Optional Time` | [`validFrom`, `validUntil`](https://www.w3.org/TR/vc-data-model-2.0/#validity-period) | Profile-defined date-time representation | Start of validity and optional intrinsic end of validity. Natural expiry after `validUntil` is derived and needs no ledger transaction. |
   | `CredentialView.credentialSubject : NonEmpty CredentialSubject` | [`credentialSubject`](https://www.w3.org/TR/vc-data-model-2.0/#credential-subject) | One subject object or an array, as the profile permits | The interface enforces `1..n` subjects. |
   | `CredentialView.holders : NonEmpty Party` | Canton extension with no core-VC counterpart | Profile extension when defined | Canton operational metadata for the canonical contract. |
 
-Semantic correspondence alone does not make `CredentialView` a conforming compacted JSON-LD VC. External conformance additionally requires the mandated [`@context`](https://www.w3.org/TR/vc-data-model-2.0/#contexts), URL [`identifiers`](https://www.w3.org/TR/vc-data-model-2.0/#identifiers) where the W3C model requires them, a [`securing mechanism`](https://www.w3.org/TR/vc-data-model-2.0/#securing-mechanisms), and a [`type`](https://www.w3.org/TR/vc-data-model-2.0/#types) including `VerifiableCredential`. See Credential Interface Normalization for detailed serialization and normalization rules.
+Semantic correspondence alone does not make `CredentialView` a conforming compacted JSON-LD VC. External conformance additionally requires the mandated [`@context`](https://www.w3.org/TR/vc-data-model-2.0/#contexts), W3C-compatible [`identifiers`](https://www.w3.org/TR/vc-data-model-2.0/#identifiers), and a [`securing mechanism`](https://www.w3.org/TR/vc-data-model-2.0/#securing-mechanisms). `CredentialView.credentialTypes` supplies the W3C `type` values. See Credential Interface Normalization for detailed serialization rules.
 
 `holders` is Canton operational metadata and MUST be excluded from standard W3C serialization unless a named extension profile defines its field, context, semantics, and security considerations. The interface view does not itself grant Daml visibility. Concrete templates define stakeholders and observers; when designated holders are made stakeholders, they see the full canonical credential and complete holder list.
 
@@ -116,7 +114,7 @@ The `credentialSubject` field expands into one or more subject records whose opt
   | `CredentialSubject.id : Optional W3C_VC_Identifier` | Optional credential subject [`id`](https://www.w3.org/TR/vc-data-model-2.0/#identifiers) | `Some identifier` emits `credentialSubject.id`; `None` omits it | Claims remain valid when the ID is absent. |
   | `CredentialSubject.claims : TextMap Api.Token.MetadataV1.AnyValue` | Properties of the [`credentialSubject`](https://www.w3.org/TR/vc-data-model-2.0/#credential-subject) | Direct properties of the same `credentialSubject` object | Namespaced property semantics and JSON-LD mapping are profile-defined. |
 
-The issuer and each present subject ID use the same `W3C_VC_Identifier` sum type. Field position determines whether a value represents the issuer or a subject. The issuer maps by field position to W3C `issuer`; a present subject ID maps to `credentialSubject.id`. A Party value requires a profile-defined Party-to-URL-or-DID mapping. Text identifiers MUST be profile-permitted and validated; they may represent a DID, URI, or another approved identifier, and unvalidated text is invalid. Profiles SHOULD avoid putting raw national identifiers on-ledger or into public serialization unless necessary and authorized.
+The issuer and each present subject ID use the same `W3C_VC_Identifier` sum type. Field position determines whether a value represents the issuer or a subject. The issuer maps by field position to W3C `issuer`; a present subject ID maps to `credentialSubject.id`. Party identifiers require a profile-defined URL or DID mapping. Text identifiers MUST be permitted and validated by the profile.
 
 **Table 3. `W3C_VC_Identifier` variants**
 
@@ -135,7 +133,7 @@ Each entry in `CredentialSubject.claims` uses `Api.Token.MetadataV1.AnyValue`, i
   | `AV_List`, `AV_Map` | Recursive collection values | Profile-defined array, set, or map representation | Nested values are mapped recursively. |
   | `AV_Party`, `AV_ContractId` | Values requiring profile-defined external identifiers | Profile-defined external identifiers | Native values require explicit interoperable mappings. |
 
-The candidate Daml imports `AnyValue` from `splice-api-token-metadata-v1`. Profiles or future standardized interfaces may adopt that type or another stable compatible claim-value carrier. Interoperable Daml implementations coordinate the claim-value type and package identity used by the interface, and serializers and clients agree on external constructor semantics. Changing the carrier, its constructors, or package identity can require coordinated implementation, binding, serializer, and client updates; structurally similar Daml types are not automatically interchangeable.
+This standard requires a stable, general-purpose `AnyValue` type for credential metadata. The candidate implementation currently reuses `splice-api-token-metadata-v1.AnyValue`.
 
 ```daml
 import DA.NonEmpty (NonEmpty, toList)
@@ -200,7 +198,7 @@ The generic interface standardizes the choice, argument, controller, preconditio
 
 `Credential_ArchiveAsAllHolders` remains unchanged: it is a terminal action controlled jointly by every Party in `holders`; all holders must authorize it, and it creates no replacement. The base interface does not define issuer-authorized archival or revocation because `W3C_VC_Identifier Text` cannot control a Daml choice. A profile or template that needs either operation MUST define an explicit Party authorization mechanism and choice, and MUST NOT infer that Party from holders, subjects, claims, or external text. Wallets MAY remove their local reference or presentation without changing the ledger contract. They MUST distinguish that local action from holder relinquishment, global archival, issuer revocation, expiration, registry removal, and deregistration.
 
-**Table 5. Base `Credential` choices**
+**Base `Credential` choices**
 
 | Choice | Controller | Preconditions | Consuming outcome |
 | --- | --- | --- | --- |
@@ -211,142 +209,208 @@ The generic interface standardizes the choice, argument, controller, preconditio
 
 One logical VC uses one canonical `Credential` contract. Every credential MUST have at least one holder, and all current holders share its contract ID, full payload, and intrinsic validity. Concrete templates MUST reject duplicate holders and use deterministic Party ordering. The view is not mutated in place: holder self-removal consumes the canonical contract and creates one replacement through the standardized choice. The replacement MUST remove exactly the exercising holder and preserve the order of all remaining holders. Frequent independently mutable or holder-private relationships MAY require future separate holder-association contracts, but this CIP does not define them. Optional association contracts MUST NOT imply a relationship between a credential subject and a Party.
 
-Concrete templates MUST reject the reserved key `id` in `claims`, including when the subject ID is `None`. Serializers emit a present subject identifier as `credentialSubject.id`, omit that property for `None`, and MUST flatten `CredentialSubject.claims` into direct properties without a `claims` wrapper. A subject with no ID may still carry claims; `None` does not guarantee anonymity. Multi-valued claims use `AV_List`. Serializers MUST recursively map `AV_List` and `AV_Map`, and MUST map every `AV_Party` and `AV_ContractId` to a profile-defined external identifier. Concrete templates MUST validate every present `W3C_VC_Identifier` according to the applicable profile and apply profile-defined claim constraints. Implementations MUST NOT infer a missing subject ID from claims, holders, the issuer, or nested values. Identifier lookup matches only present IDs; subjects with absent IDs do not match identifier filters.
+- Concrete templates MUST reject the reserved key `id` in `claims`, including when the subject ID is `None`.
+- W3C serializers MUST map the Daml field `credentialTypes` to JSON-LD `type`; ledger and PQS payloads retain `credentialTypes`.
+- Serializers MUST emit a present subject identifier as `credentialSubject.id` and omit that property for `None`.
+- Serializers MUST flatten `CredentialSubject.claims` into direct subject properties without a `claims` wrapper.
+- A subject with no ID MAY still carry claims.
+- Multi-valued claims MUST use `AV_List`.
+- Serializers MUST recursively map `AV_List` and `AV_Map`.
+- Serializers MUST map every `AV_Party` and `AV_ContractId` to a profile-defined external identifier.
+- Concrete templates MUST validate every present `W3C_VC_Identifier` according to the applicable profile and MUST apply profile-defined claim constraints.
+- Implementations MUST NOT infer a missing subject ID from claims, holders, the issuer, or nested values.
+- Identifier lookup MUST match only present IDs; subjects with absent IDs MUST NOT match identifier filters.
 
-This draft defines no canonical JSON-LD normalization. Deterministic ordering currently applies to holder Parties, not arbitrary claim keys or properties. Whether one `credentialSubject` is serialized as one object or an array remains profile-defined. For example, a claims-only subject can use `CredentialSubject { id = None, claims = TextMap.fromList [("profile.example/status", Api.Token.MetadataV1.AV_Text "active")] }`; omission of an ID makes no anonymity guarantee.
+This draft defines no canonical JSON-LD normalization. Deterministic ordering currently applies to holder Parties, not arbitrary claim keys or properties. Whether one `credentialSubject` is serialized as one object or an array remains profile-defined. For example, a claims-only subject can use `CredentialSubject { id = None, claims = TextMap.fromList [("profile.example/status", Api.Token.MetadataV1.AV_Text "active")] }`.
 
 ##### Registered Credential Interface
 
-`RegisteredCredential` requires `Credential`, so a registry-enabled template exposes registration state in addition to its intrinsic view. Registration metadata is separate from `CredentialView`:
+`RegisteredCredential` requires `Credential` and exposes the registry state associated with the same canonical contract. Clients project its view independently from `CredentialView`.
+
+The registration view carries the administering Party, registration time, optional retention expiry, and extensibility metadata.
+
+**Table 5. `RegisteredCredentialView` fields**
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `registryAdmin` | `Party` | Party administering this registration. |
+| `registeredAt` | `Time` | Time at which the credential was registered. |
+| `expiresAt` | `Optional Time` | Optional registry-retention expiry, independent of `CredentialView.validUntil`; see Credential Lifecycle. |
+| `meta` | `TextMap Api.Token.MetadataV1.AnyValue` | Registry-specific extensibility metadata. |
+
+`RegisteredCredential` is registration-only and requires `Credential`; registration does not make lifecycle support mandatory. Its interface offers the read operation below.
+
+**Table 6. `RegisteredCredential` choices**
+
+| Choice | Input | Controller | Result | Behavior |
+| --- | --- | --- | --- | --- |
+| `RegisteredCredential_PublicFetch` | `expectedRegistryAdmin : Party`; `actor : Party` | `actor` | `RegisteredCredentialView` | Nonconsuming fetch that requires the returned `registryAdmin` to equal `expectedRegistryAdmin`. |
+
+`RegisteredCredentialLifecycle` owns registered renewal and requires `RegisteredCredential`, `CredentialLifecycle`, and `Credential`. The final `Credential` is conceptually implied by both parent interfaces but is declared because Daml requires the full transitive interface requirement closure.
+
+**Table 7. `RegisteredCredentialLifecycle` choices**
+
+| Choice | Input | Controller | Result | Behavior |
+| --- | --- | --- | --- | --- |
+| `RegisteredCredentialLifecycle_Renew` | `expectedCredential : CredentialView`; `issuer : Party`; `registryAdmin : Party`; `validUntil : Time`; `profileAuthorization : Optional (TextMap Api.Token.MetadataV1.AnyValue)`; `paymentEvidence : Optional (TextMap Api.Token.MetadataV1.AnyValue)` | `issuer` and `registryAdmin` jointly | `RegisteredCredentialLifecycle_RenewResult` | Validates the exact current credential view, then consumes and atomically replaces the registered credential, extending intrinsic `validUntil` and registration `expiresAt` to the same strictly later time while preserving all other fields. Profile authorization and payment evidence are optional profile-defined inputs. |
+
+Callers MUST obtain `expectedRegistryAdmin` from a trusted source. Implementations MUST validate it against the view. Package vetting and registry-provider security review remain necessary.
 
 ```daml
--- Candidate; sourced from interfaces/daml/Canton/Network/Credentials/V1.daml.
-data RegistrationMetadata = RegistrationMetadata with
-   registryAdmin : Party
-     -- ^ The party administering this registration.
-   registeredAt : Optional Time
-     -- ^ The time at which the credential was registered.
-   expiresAt : Optional Time
-     -- ^ The time at which the registration expires under registry policy.
-     -- This is independent of CredentialView.validUntil.
-   meta : Api.Token.MetadataV1.Metadata
-     -- ^ Registry-specific extensibility metadata.
- deriving (Eq, Show)
-
+-- Candidate; sourced from demo/interface/daml/Canton/Network/Credentials/V1.daml.
 data RegisteredCredentialView = RegisteredCredentialView with
-   registration : RegistrationMetadata
- deriving (Eq, Show)
+  registryAdmin : Party
+  registeredAt : Time
+  expiresAt : Optional Time
+  meta : TextMap Api.Token.MetadataV1.AnyValue
+  deriving (Eq, Show)
 
 interface RegisteredCredential requires Credential where
- viewtype RegisteredCredentialView
+  viewtype RegisteredCredentialView
 
- registeredCredential_publicFetchImpl : ContractId RegisteredCredential -> RegisteredCredential_PublicFetch -> Update RegisteredCredentialView
+  registeredCredential_publicFetchImpl : ContractId RegisteredCredential -> RegisteredCredential_PublicFetch -> Update RegisteredCredentialView
 
- nonconsuming choice RegisteredCredential_PublicFetch : RegisteredCredentialView
-   -- ^ Fetch registration metadata for a known and disclosed contract.
-   -- This does not provide anonymous public discovery. Discovery and disclosure
-   -- are supplied by the registry HTTP API and Canton transaction mechanisms.
-   with
-     expectedRegistryAdmin : Party
-       -- ^ The expected party administering the registration.
-     actor : Party
-       -- ^ The party fetching the known contract.
-   controller actor
-   do
-     result <- registeredCredential_publicFetchImpl this self arg
-     assertMsg "unexpected registry administrator" (expectedRegistryAdmin == result.registration.registryAdmin)
-     pure result
+  nonconsuming choice RegisteredCredential_PublicFetch : RegisteredCredentialView
+    with
+      expectedRegistryAdmin : Party
+      actor : Party
+    controller actor
+    do
+      result <- registeredCredential_publicFetchImpl this self arg
+      assertMsg "unexpected registry administrator" (expectedRegistryAdmin == result.registryAdmin)
+      pure result
+
+data RegisteredCredentialLifecycle_RenewResult = RegisteredCredentialLifecycle_RenewResult with
+  replacementCredential : ContractId RegisteredCredentialLifecycle
+  deriving (Eq, Show)
+
+interface RegisteredCredentialLifecycle requires RegisteredCredential, CredentialLifecycle, Credential where
+  viewtype RegisteredCredentialView
+
+  registeredCredentialLifecycle_renewImpl : ContractId RegisteredCredentialLifecycle -> RegisteredCredentialLifecycle_Renew -> Update RegisteredCredentialLifecycle_RenewResult
+
+  choice RegisteredCredentialLifecycle_Renew : RegisteredCredentialLifecycle_RenewResult
+    with
+      expectedCredential : CredentialView
+      issuer : Party
+      registryAdmin : Party
+      validUntil : Time
+      profileAuthorization : Optional (TextMap Api.Token.MetadataV1.AnyValue)
+      paymentEvidence : Optional (TextMap Api.Token.MetadataV1.AnyValue)
+    controller issuer, registryAdmin
+    do
+      assertMsg "party is not the credential issuer" (expectedCredential.issuer == W3C_VC_Identifier_Party issuer)
+      assertMsg "renewal requires an existing validUntil" (expectedCredential.validUntil /= None)
+      assertMsg "renewal validUntil must be strictly later" (Some validUntil > expectedCredential.validUntil)
+      assertMsg "party is not the registry administrator" (registryAdmin == (view this).registryAdmin)
+      assertMsg "renewal requires an existing expiresAt" ((view this).expiresAt /= None)
+      assertMsg "renewal expiresAt must be strictly later" (Some validUntil > (view this).expiresAt)
+      registeredCredentialLifecycle_renewImpl this self arg
 ```
 
-Clients project `CredentialView` and `RegisteredCredentialView` independently. `RegisteredCredential_PublicFetch` is a nonconsuming, actor-controlled operation for fetching registration metadata from a known and disclosed contract; it does not provide anonymous discovery. The expected party administering the registration is supplied as `expectedRegistryAdmin`. Implementations MUST validate that it matches the `registryAdmin` in the registration view. The check depends on callers obtaining that party from a trusted source; package vetting and registry-provider security review remain necessary, and apps and users that want to use registered credentials from a specific registry on-ledger must vet the registry's DARs.
+`CredentialView.validUntil` remains intrinsic validity and `RegisteredCredentialView.expiresAt` remains registry retention. Generic clients MUST keep them distinct. The DSO profile requires equality where both are present and requires `RegisteredCredentialLifecycle_Renew` to update both atomically to the same strictly later value. A concrete registered credential MAY also implement `CredentialLifecycle`; that independent capability is not required by `RegisteredCredential`.
 
-When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfAsHolder` MUST preserve registration continuity. Embedded registration metadata MUST be copied unchanged. References keyed by contract ID MUST be updated atomically in the same transaction, or references based on stable logical identity MUST continue to identify the replacement correctly. Registration timestamps, expiry, fees, status, retention, and audit or history state MUST NOT reset. The generic result remains `ContractId Credential`; any stronger `RegisteredCredential` result or discovery mechanism is profile-specific. An implementation MUST NOT add a second registered self-removal choice that conflicts with or bypasses the base choice.
+When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfAsHolder` MUST preserve registration continuity. The four registration fields MUST be copied unchanged, and contract-ID references MUST be updated atomically in the same transaction. The generic result remains `ContractId Credential`; an implementation MUST NOT add a second registered self-removal choice that conflicts with or bypasses the base choice.
 
 ##### Credential Registry Factory Interface
 
-A registry that implements this interface exposes the following bulk registration-update entry point:
+`CredentialRegistryFactory` provides the generic initial-issuance entry point for creating a registered credential. Its view identifies the registry administrator and the issuer authorized to create credentials through that factory.
 
-```daml
-data CredentialRegistryFactoryView = CredentialRegistryFactoryView with
-  registryAdmin : Party
-  deriving (Eq, Show)
+**Table 7. `CredentialRegistryFactoryView` fields**
 
-data RegisteredCredentialUpdate = RegisteredCredentialUpdate with
-  registeredCredential : ContractId RegisteredCredential
-  registration : RegistrationMetadata
-  deriving (Eq, Show)
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `registryAdmin` | `Party` | Party administering registry registration. |
+| `issuer` | `Party` | Party authorized to issue credentials through this factory. |
 
-data CredentialRegistryFactory_UpdateRegisteredCredentialsResult = CredentialRegistryFactory_UpdateRegisteredCredentialsResult with
-  registeredCredentials : [ContractId RegisteredCredential]
-  deriving (Eq, Show)
+**Table 8. `CredentialRegistryFactory` choices**
 
-interface CredentialRegistryFactory where
-  viewtype CredentialRegistryFactoryView
+| Choice | Controller | Inputs and preconditions | Result |
+| --- | --- | --- | --- |
+| `CredentialRegistryFactory_Issue` | `issuer` | The supplied credential issuer and registration administrator MUST match the factory authority. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
 
-  credentialRegistryFactory_updateRegisteredCredentialsImpl : ContractId CredentialRegistryFactory -> CredentialRegistryFactory_UpdateRegisteredCredentials -> Update CredentialRegistryFactory_UpdateRegisteredCredentialsResult
-
-  choice CredentialRegistryFactory_UpdateRegisteredCredentials : CredentialRegistryFactory_UpdateRegisteredCredentialsResult
-    with
-      actor : Party
-      updates : [RegisteredCredentialUpdate]
-    controller actor
-    do
-      credentialRegistryFactory_updateRegisteredCredentialsImpl this self arg
-```
-
-The actor-controlled choice carries known `RegisteredCredential` contract IDs and replacement `RegistrationMetadata`; it does not mutate the intrinsic `CredentialView` or attach an interface dynamically to an existing contract. Concrete factory implementations define and enforce actor and registry-administrator authorization, verify that each target belongs to the registry, and preserve intrinsic issuer, canonical `holders`, and `NonEmpty CredentialSubject`. The interface does not define the issuer's assertion policy. Initial creation and registry-removal workflows remain unresolved and are not fabricated by the checked-in candidate source.
-
-Conforming registries SHOULD implement the Credential Registry Factory Interface to enable portable third-party registration. A registry MAY limit registration to internal workflows only when its profile explicitly declares that limitation through Registry Info capabilities. The current Registry Info API text does not yet define a capabilities field, so the exact declaration mechanism is an open design item. Supporting the factory improves issuer portability and interoperability; restricting registration can simplify authorization, policy enforcement, and operations at the cost of portability.
-
-The candidate interface is a semantically breaking replacement for the draft `CredentialFactory` / `CredentialFactory_UpdateCredentials` surface. Prototype and reference implementations MAY temporarily retain old symbols as compatibility adapters, but those symbols are outside this candidate interface and this CIP does not claim that such compatibility code exists. A corresponding HTTP API endpoint allows retrieval of the context needed by the selected factory version. Earlier drafts are available in [Splice/Api/Credential/RegistryV1.daml](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-808147bf36f1c087a42b92d67d2021c2ca203076cc0e3b6a31f2ccc60497a34d) and [openapi/credential-registry-v1.yaml](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-a73145dfdb26770f01b5fc0a9f35c7c34f067584acb6ec16de7e82040df6f835).
+`CredentialRegistryFactory_Issue` is nonconsuming, so the factory remains available after issuance. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, and standalone retention updates are non-normative roadmap topics. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
 
 #### HTTP Interfaces
 
-The HTTP interfaces apply only to registry-enabled credentials; implementing `Credential` alone does not expose them. They provide registry information, exact lookup, and bounded bulk retrieval. Registry publication classifies records as **public**, **restricted**, or **private** according to registry policy and issuer input. Public records may be returned to unauthenticated API clients and indexed by explorers. Restricted records require an authorization policy. Private records and their contents are not exposed through public APIs. These classifications do not change Daml contract visibility or stakeholder obligations.
+The HTTP interfaces define two distinct read-resource families for records that an implementation makes available through a conforming endpoint. `GET /v1/credentials` and `GET /v1/credentials/{credentialId}` expose intrinsic `Credential` projections and MUST NOT require the underlying contract to implement `RegisteredCredential`. `GET /v1/registered-credentials` and `GET /v1/registered-credentials/{credentialId}` expose only contracts that implement both `Credential` and `RegisteredCredential`, associated by identical contract ID. A registered HTTP record MUST contain separate `credential` and `registration` objects. These HTTP projections do not merge the Daml interface views or change the requirement that `RegisteredCredential requires Credential`.
 
-> **Review note:** The profile must define which party makes the final visibility-classification decision when issuer input and registry policy differ.
+Layer 1 does not classify records as public, restricted, or private and does not decide who may call an endpoint or receive a record. Deployments and implementors define endpoint exposure, filtering, authentication, authorization, and audience, independently of Daml stakeholder visibility. Conformance to these interfaces neither requires unauthenticated access nor grants access to any credential. The same operation and response schemas apply regardless of the deployment's access policy.
+
+The normative HTTP contract is the local [Credentials API v1 OpenAPI source](demo/interface/openapi/credential-registry-v1.yaml), with `/v1` as its canonical base path. It defines family-specific capabilities, exact logical-ID lookup, bounded bulk retrieval, filters, lifecycle scope, separate event-history operations, pagination, ordering, responses, and errors. Compatible aliases such as `/api/v1` are non-normative and, when retained, MUST be documented as deprecated mappings with identical semantics.
 
 ##### PQS-backed Read Model and Request Flows
 
-The Canton ledger is the source of transaction truth. Participant Query Store (PQS) continuously indexes contracts visible to its configured ledger identity and exposes a PostgreSQL reader API. Registry APIs perform read-only queries against the documented PQS SQL surface, including `active(...)` for filtered projection scans and joins, and MUST NOT depend on PQS physical `__*` tables. A deployment MAY use `lookup_contract(...)` when a contract ID is already known; the demo uses `active(...)` for both exact logical-ID lookup and pagination. The registry API does not run a custom ledger-ingestion or event-indexing pipeline.
+The Canton ledger is the source of transaction truth. Participant Query Store (PQS) continuously indexes contracts visible to its configured ledger identity and exposes a PostgreSQL reader API. A PQS-backed API performs read-only queries against documented PQS reader surfaces and MUST NOT depend on physical `__*` tables or other undocumented internals. The documented `active(...)` function is the baseline source for current active interface projections. A deployment MAY use `lookup_contract(...)` when a contract ID is already known.
 
-A registry-enabled credential is represented in PQS by active `Credential` and `RegisteredCredential` interface projections for the same contract ID. The `Credential` projection supplies intrinsic credential fields, while the `RegisteredCredential` projection supplies registration metadata. Registry API results MUST associate these projections by contract ID and MUST use only rows visible to the configured PQS ledger identity. API reads are eventually consistent with PQS and may lag the Canton ledger.
+The intrinsic credential family reads active `Credential` projections directly. The registered credential family reads active `Credential` and `RegisteredCredential` interface projections joined by identical contract ID. The `Credential` projection supplies intrinsic fields, while the `RegisteredCredential` projection supplies registration metadata. Both families MUST use only rows visible to the configured PQS ledger identity. API reads are eventually consistent with PQS and may lag the Canton ledger.
+
+Inactive or archived record projections are distinct from active interface projections. Ledger transaction or event history is also distinct from record retrieval because events can have different fields, cardinality, and ordering. This CIP does not assert that PQS provides a stable inactive or archived SQL reader: current evidence establishes `active(...)`, but no stable archived or inactive PQS SQL reader. Consequently:
+
+- Every conforming implementation MUST support active record retrieval.
+- An implementation MUST advertise whether `inactiveRecords` and `eventHistory` are supported in Registry Info.
+- An implementation advertising inactive-record retrieval MUST document the implementation-specific backing that supplies those records and the lifecycle-state semantics.
+- An implementation advertising event history MUST expose it through the separate event-history operation and schema, document its backing and ordering, and MUST NOT mix events into credential-record result pages.
+- An implementation that does not advertise a lifecycle capability MUST reject requests requiring it as described by the OpenAPI contract; it MUST NOT fabricate historical records from active projections.
+
+These requirements allow explorers and other authorized clients to query lifecycle and event history when the deployment supports those capabilities, while keeping active retrieval as the interoperable baseline. Endpoint access remains deployment policy.
 
 ![Sequence diagram showing PQS-owned indexing, single lookup, and bounded bulk pagination.](images/credentials-http-api-sequence.png)
 
 *PQS-backed HTTP read sequence. [PlantUML source](images/credentials-http-api-sequence.puml).*
 
-Implementations MAY create narrow payload indexes through indexing facilities supported by the deployed PQS version. Such indexes are optional query optimizations and do not introduce a separate ingestion path. PostgreSQL table layout, JSON representation, index expressions, helper signatures, and index maintenance are deployment concerns and are not normative in this CIP.
+A conforming implementation MUST provide logical indexes or equivalent access paths sufficient for the standard query patterns it advertises. The baseline access paths are exact logical credential ID, contract-ID association between projections, and deterministic ordering by logical credential ID with contract ID as the final tie-breaker. It MUST also provide access paths for every retained standard filter advertised by Registry Info. Implementations MAY add further indexes or access paths. This requirement is logical and does not prescribe PostgreSQL expressions, PQS helper signatures, physical table layouts, JSON storage, index names, or index-maintenance mechanisms.
 
 ##### Credential Registry Info API
 
-The credential registry info API enables asynchronous rollout of newer API versions and informs clients about registry constraints, such as limits on subject claims or result counts. Credential registries MAY enforce limits on stored credentials. Registry Info SHOULD expose supported filters and default and maximum page sizes once the external OpenAPI schema defines their representation. See [DSO Credential Registry Limits](#dso-credential-registry-limits).
-
-A capability declaration for registries that restrict registration to internal workflows remains open. A draft API is specified in [openapi/credential-registry-v1.yaml](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-a73145dfdb26770f01b5fc0a9f35c7c34f067584acb6ec16de7e82040df6f835); alignment is an external follow-up.
+Registry Info enables API-version rollout and reports each resource family's capabilities and constraints independently. It MUST identify the API version and, for both credentials and registered credentials, active, inactive-record, and event-history capabilities; supported lifecycle scopes and filters; and default and maximum page sizes. It MAY report additional implementation limits, including limits on subject claims or stored credentials. See [DSO Credential Registry Limits](#dso-credential-registry-limits).
 
 ##### Credential Lookup API
 
-The lookup API queries active `Credential` and `RegisteredCredential` interface projections in PQS and associates them by contract ID. Intrinsic credential fields come from `Credential`, while registration metadata comes from `RegisteredCredential`. An exact logical credential-ID lookup reads the logical ID from the `Credential` projection and returns the associated registration data when the corresponding active `RegisteredCredential` projection is present. It returns one record, not found, or a duplicate-key conflict according to the external API contract. Other supported filters may return collections. Optional payload indexes MAY be used only through facilities supported by the deployed PQS version; they do not change the projection model.
+Exact lookup uses a logical credential ID and a requested lifecycle scope. Active lookup is mandatory for each family. If the implementation advertises inactive-record retrieval for that family, lookup can also return inactive records according to the declared scope and backing. An intrinsic result contains its contract ID, lifecycle state, and `credential` object. A registered result contains its contract ID, lifecycle state, and separate `credential` and `registration` objects. Each operation returns one record, not found, or a duplicate-key conflict according to the OpenAPI contract.
 
-Results expose only credential and registration fields allowed by registry policy. "Public" describes HTTP retrieval policy, not automatic Canton visibility. PQS-observed activeness can lag the ledger. When a profile supports authorized disclosure, a Daml transaction may use `RegisteredCredential_PublicFetch` for transaction-time confirmation; an indexed row or disclosure blob alone does not prove current activeness, registration validity, or intrinsic credential validity.
+Results contain only records selected by deployment-defined exposure and access policy. PQS-observed activeness can lag the ledger. When a profile supports authorized disclosure, a Daml transaction may use `RegisteredCredential_PublicFetch` for transaction-time confirmation; an indexed row or disclosure blob alone does not prove current activeness, registration validity, or intrinsic credential validity.
 
 ##### Bulk Credential Retrieval API
 
-Bulk retrieval uses ordinary bounded SQL pagination over active PQS projections associated by contract ID. Requests use zero-based `page` and positive `pageSize`: `page` identifies the page number, `pageSize` is the maximum number of returned items, and the starting offset is `page * pageSize`. Deployments MUST define a default page size and maximum, reject invalid or excessive values, use deterministic ordering with a contract-ID tie-breaker, and fetch at most `pageSize + 1` associated rows with `LIMIT` and `OFFSET` to determine whether another page exists. A response reports `items`, `page`, `pageSize`, and `hasNext`; a total count is not required.
+Bulk retrieval returns projections from the selected resource family for the requested lifecycle scope. Active retrieval is mandatory; capability-supported inactive records can be included only when requested. Each family declares its supported filters and has a distinct event-history operation and schema. Events MUST NOT be mixed into record pages or shared between families as if their semantics were identical.
 
-Offset pagination does not provide snapshot consistency. Concurrent PQS updates can shift page boundaries and cause clients to observe duplicates or omissions across requests. This API does not provide snapshot or ingestion-grade guarantees.
+Pagination requirements are normative:
+
+- `page` MUST be a zero-based integer and defaults to `0`.
+- `pageSize` MUST be a positive integer. The declared default is `50` and the declared maximum is `100` unless Registry Info declares different values permitted by a future compatible profile.
+- An implementation MUST reject invalid values, values above the declared maximum, and offsets it cannot represent safely.
+- The offset MUST be `page * pageSize`.
+- Ordering MUST be deterministic. Credential-record pages MUST order by logical credential ID and use contract ID as the final tie-breaker after any other declared sort keys.
+- An implementation MUST fetch at most `pageSize + 1` matching rows using `LIMIT` and `OFFSET` or equivalent bounded operations.
+- The extra item, when present, MUST determine `hasNext` and MUST NOT appear in `items`.
+- The response MUST contain `items`, `page`, `pageSize`, and `hasNext`. A total count is not required.
+- Offset pagination does not provide snapshot consistency. Concurrent updates can shift page boundaries and cause duplicates or omissions across requests; clients MUST tolerate that drift.
+
+Event-history pagination follows the same bounds and look-ahead rule but uses the event ordering declared in the OpenAPI contract rather than credential-record ordering.
 
 #### Credential Lifecycle
 
-`CredentialView.validFrom` and `CredentialView.validUntil` define intrinsic usability and expiry. `RegistrationMetadata.registeredAt` and `RegistrationMetadata.expiresAt` define registry retention for the one canonical logical credential; registration attaches once, not separately to each holder. Holder relinquishment replaces the canonical contract without terminating the logical credential or resetting intrinsic validity or registration. Registry expiry, extension, removal, or deregistration does not renew, replace, or extend intrinsic validity.
+The normative lifecycle model contains exactly `CredentialRegistryFactory_Issue`, `CredentialLifecycle_Renew`, and `RegisteredCredentialLifecycle_Renew`. `CredentialView.validUntil` defines intrinsic expiry. Natural passage beyond it changes usability as a derived condition and requires no ledger transaction. `RegisteredCredentialView.expiresAt` defines registry retention and remains a distinct field.
 
-![Two-lane credential lifecycle: a holder may relinquish only itself through consuming canonical-contract replacement while preserving credential and registration state; jointly authorized all-holder archival terminates the canonical contract without replacement; intrinsic validity and registration retention remain distinct.](images/credentials-lifecycle.png)
+![Credential lifecycle showing initial issuance, intrinsic renewal, atomic registered renewal, holder self-removal, and all-holder archival.](images/credentials-lifecycle.png)
 
-*Candidate lifecycle view showing holder relinquishment by replacement, terminal all-holder archival, intrinsic validity, and the independent registry-retention path. [PlantUML source](images/credentials-lifecycle.puml).*
+*Simplified lifecycle view. [PlantUML source](images/credentials-lifecycle.puml).*
 
-Local wallet removal, holder relinquishment, Daml archival, intrinsic expiry, revocation or suspension, registration expiry, and deregistration are distinct actions or states. Relinquishment removes only the exercising holder and replaces the contract; all-holder archival terminates the current canonical credential without replacement. A removed holder loses future stakeholder visibility according to the concrete template's stakeholder behavior, but ledger history and data already observed cannot be erased. A registry MAY remove or archive a registration after registration expiry. A registry MAY define an operation that extends retention before or after registration expiry. Whether an extension updates the registration, creates a replacement registration, or requires a new registration remains registry policy and is not standardized here.
+**Table 10. Normative lifecycle transitions**
 
-TODO: confirm whether clients should create a new credential approximately 24 hours before intrinsic credential expiry to avoid contention with prepared transactions referencing the old credential. This unresolved, non-normative client strategy would replace the intrinsic credential; it would not be registration extension or renewal. The client-side last-write-wins semantics for name resolution supports this approach.
+| Current state | Operation | Next state | Required authority | Required semantics |
+| --- | --- | --- | --- | --- |
+| No credential | `CredentialRegistryFactory_Issue` | One registered credential | Configured issuer | Creates one canonical registered credential. |
+| Credential with finite `validUntil` | `CredentialLifecycle_Renew` | Replacement credential | Issuer | Requested `validUntil` MUST be strictly later. The old contract is consumed and exactly one replacement is created atomically, preserving other fields. |
+| Registered credential with finite `validUntil` and `expiresAt` | `RegisteredCredentialLifecycle_Renew` | Replacement registered credential | Issuer and registry administrator jointly | Both values become the same strictly later requested time in one atomic replacement; all other credential and registration fields are preserved. |
+| Any credential | Natural passage beyond `validUntil` | Derived expired usability | None | No transaction or registry change. |
+
+`CredentialLifecycle` is optional and requires `Credential`. `RegisteredCredential` is registration-only and requires `Credential`, so lifecycle support is not mandatory on registration. `RegisteredCredentialLifecycle` requires `RegisteredCredential`, `CredentialLifecycle`, and the compiler-required explicit transitive `Credential`. A concrete contract MAY implement all four interfaces: `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`.
+
+The generic model keeps intrinsic validity and registry retention separate. The DSO profile requires `validUntil == expiresAt` where both are present and renews both atomically. Payment MAY be additional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`; it is not part of the generic interface.
+
+Holder relinquishment and all-holder archival remain distinct `Credential` operations. Relinquishment removes only the exercising holder and replaces the contract while preserving validity and registration. All-holder archival terminates the canonical credential without replacement. A removed holder loses future stakeholder visibility according to concrete stakeholder behavior, but previously observed ledger data cannot be erased.
 
 <a id="application-and-metadata-discovery"></a>
 ### Layer 2: Standardized Application and Metadata Discovery
@@ -439,7 +503,7 @@ The credential is issued by the `dso` party. The CNS profile validates the exter
 Resolving a CNS name `n` to the party holding it can be done using:
 
 ```text
-GET /credential-registry/v1/credentials?issuer=<dso>&credentialSubjectId=<n>&keyPrefix=cip-TBD/cns-owner
+GET /v1/credentials?issuer=<dso>&credentialSubjectId=<n>&keyPrefix=cip-TBD/cns-owner
 ```
 
 The response will contain the credential listing the owner of the CNS name if it exists. The guarantee that there is at most one such credential is provided by the `dso` party as the issuer, which shows why it is paramount to constrain the query with `issuer=<dso>`.
@@ -447,12 +511,12 @@ The response will contain the credential listing the owner of the CNS name if it
 The reverse lookup to query all names of a party `p` can be done using:
 
 ```text
-GET /credential-registry/v1/credentials?holder=<p>&issuer=<dso>&keyPrefix=cip-TBD/cns-owner
+GET /v1/credentials?holder=<p>&issuer=<dso>&keyPrefix=cip-TBD/cns-owner
 ```
 
 The singular `holder=<p>` query parameter filters by membership: the response will list one credential per CNS name for which `p` is a member of `CredentialView.holders`.
 
-The [draft PR shows here](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-6ffb0d08eee67175e91eabd4e3bf1d811e8ab18a029a541d169aa482fe3e294a) the earlier prototype approach of implementing `Credential` directly on the existing `AnsEntry` template to expose CNS 1.0 entries through the Credential Registry API. Under the candidate split in this draft, a registry-exposed template exposes `Credential` and `RegisteredCredential`; the exact migration of `AnsEntry` requires the Daml SDK compile spike. The issuance of CNS 1.0 entries continues to use the existing workflow. This matches the overall design of this CIP, which gives issuers full freedom in their issuance workflows.
+The DSO/reference registry-exposed template implements `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`. CNS issuance remains an issuer workflow and uses the same standardized factory lifecycle when the resulting credential is registered.
 
 ##### Multi-Issuer and Multi-Registry Name Resolution
 
@@ -518,61 +582,34 @@ The current profile does not partition registry state or workload by issuer name
 
 *Container view of the DSO Public Credential Issuance Application instance and its one logical DSO Credential Registry. Physical hosting topology is intentionally unspecified. [C4-PlantUML source](images/credentials-containers.puml).*
 
-The DSO profile applies the generic registry and discovery surfaces defined by Layers 1 and 2. Registry Info advertises the DSO Registry's constraints, API version, supported capabilities when defined, and endpoint information. Advertising registration capabilities, including an internal-workflow-only limitation, awaits the open generic capability-declaration design. Clients and explorers use the published endpoint information without depending on the registry's physical storage or hosting topology. The following subsections define the DSO profile's concrete expiry, access, discovery, and operating model.
+The DSO profile applies the generic registry and discovery surfaces defined by Layers 1 and 2. Registry Info advertises the DSO Registry's constraints, API version, required read capabilities, supported lifecycle scopes and filters, pagination limits, and endpoint information. A profile-specific registration capability is additionally required if registration is restricted to internal workflows. Clients and explorers use the published endpoint information without depending on the registry's physical storage or hosting topology. The following subsections define the DSO profile's concrete expiry, access, discovery, and operating model.
 
-#### Concrete Expiry and Paid Extension Policy
+#### Concrete Expiry and Renewal Policy
 
-By default, there is no CC payment required for registering credential records in the DSO Credential Registry. Instead, the registry expires registrations within 90 days, configurable by SV voting, so that traffic from registration and registration-retention extension contributes toward storage cost. This is registration expiry and does not set or shorten the top-level `CredentialView.validUntil` value.
+The DSO profile keeps intrinsic validity and registry retention conceptually distinct but requires `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` to be equal where both are present. By default, initial registration requires no CC payment and both values are set within 90 days, configurable by SV voting.
 
-##### Extended Expiration Durations
+A DSO `RegisteredCredentialLifecycle_Renew` MUST be jointly authorized by the issuer and DSO registry administrator. It consumes the old canonical contract and creates exactly one replacement atomically, setting both values to the same strictly later time and preserving every other credential and registration field.
 
-The registry supports a paid registration-extension operation that can extend the registration expiration duration beyond 90 days by burning a CC fee configurable by SV voting. The fee purchases registry retention only; it does not extend credential validity.
-This burn is executed by performing a CC transfer to the `cip-112/burn` account defined in
-[CIP-112](https://github.com/canton-foundation/cips/blob/main/cip-0112/cip-0112.md#4321-special-account-identifiers-for-mint-and-burn) (Token Standard V2) with the following two extra arguments of `V2.TransferFactory_Transfer`:
-
-- `cip-TBD/extend-credential-expiry-to` set to the new expiration time in `extraArgs.meta`
-- `cip-TBD/credential-contract-id` set to the contract-id of the credential in `extraArgs.context`
-
-The payment requires authorization from the sender of the funds and from at least one of the credential issuer or a party in `holders`.
-
-This authorization policy allows credential issuance apps to extend registration expiration on behalf of the issuer or one of the credential's holders, as part of an app's workflow.
-For example by creating the credential and extending its expiration in the same
-transaction.
+Payment is optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. The current iteration defines no transfer protocol or price. The TSv1 roadmap must resolve payer and receiver authorization, pricing, payment-renewal atomicity, replay and idempotency, failure and refunds, finality, concurrency control, privacy, metadata validation, and auditability before adoption.
 
 
 #### Deployment Components and Access
 
 The APIs are implemented as follows:
 
-1. The `splice-amulet-name-service` package is extended with two templates as prototyped in [this PR](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-271a41476c5ed80c77cbe363f39cc58f5f422a6c9991cfc2fa2bd65398802d7e), subject to the breaking draft migration described below.
-   1. The `AnsCredentialFactory` template implements the candidate `CredentialRegistryFactory` interface. A prototype retaining `CredentialFactory` requires an explicit compatibility adapter or migration.
-   2. The proposed `AnsCredentialRecord` template exposes both `Credential` and `RegisteredCredential` on one canonical credential contract.
+1. The `splice-amulet-name-service` package provides two templates for this profile.
+   1. The `AnsCredentialFactory` template implements the candidate `CredentialRegistryFactory` interface.
+   2. The proposed `AnsCredentialRecord` template exposes `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle` on one canonical credential contract.
 2. The registry backend and standard APIs operate for the DSO Party, which is both administrator and operator of the one logical registry.
-3. DSO-governed discovery records announce the DSO Party, API version, supported capabilities when defined, and registry API URLs.
+3. DSO-governed discovery records announce the DSO Party, API version, supported read capabilities and lifecycle scopes, and registry API URLs.
 
-Clients query the DSO Credential Registry APIs directly. Explorers retrieve deliberately public records through the Bulk Credential Retrieval API. The profile does not assign registry operation to Validators, require a Scan proxy, or require a custom explorer or registry ingestion pipeline. If multiple access endpoints are published, they provide access to the same logical registry; their physical hosting, availability design, and consistency guarantees are outside this iteration.
+Clients query the DSO Credential Registry APIs directly. Explorers can retrieve active records and, when advertised, inactive records or event history through the corresponding standard operations, subject to the deployment's endpoint exposure, filtering, authentication, authorization, and audience policy. The profile does not assign registry operation to Validators, require a Scan proxy, or require a custom explorer or registry ingestion pipeline. If multiple access endpoints are published, they provide access to the same logical registry; their physical hosting, availability design, access policy, and consistency guarantees are outside this iteration.
 
 Scalability is measured for the logical registry. Representative load tests should measure PQS projection growth, API throughput and latency, storage, and operating cost before more complex mechanisms are considered.
 
 #### Economic, Business, and Operational Considerations (Informative)
 
-The DSO profile's registration expiry, paid registration extension, CC burn, and governance parameters provide a transparent mechanism for discussing recurring registry-retention activity without claiming a forecast. Let:
-
-* `F` be the default fee in CC for one paid extension event, as configured by governance;
-* `P` be the number of parties eligible to publish records;
-* `r` be the average number of eligible records per party;
-* `z` be the fraction of eligible records adopted into the registry;
-* `e` be the average number of paid extension events per adopted record per period;
-* `Y = P * r * z * e` be paid extension events per period; and
-* `B = F * Y` be CC burned per period.
-
-This is parametric arithmetic, not a prediction. `P` and `r` are counts, `z` is a dimensionless fraction between zero and one, `e` is events per record per stated period, `Y` is events per that period, and `B` is CC per that period. The draft defines no numeric value for these variables. Any use of the model MUST identify the network, period, eligible population, governance-configured `F`, and assumptions behind `r`, `z`, and `e`. Free renewals, policy exemptions, or records that expire without paid extension are outside `Y`.
-
-Token Standard V1 wallets can be used to burn CC to extend the registration-retention duration of registered credentials by encoding the special receipt account and the extension parameters as follows:
-
-- set `transfer.receiver` to the special `cip-112_no-owner::1220000000000000000000000000000000000000000000000000000000000000abcd` party
-- set `cip-112/receiver.id` to `cip-112/burn` in `transfer.meta`
-- set the other two arguments `cip-TBD/extend-credential-expiry-to` and `cip-TBD/credential-contract-id` as explained above
+Registration expiry creates recurring retention activity without claiming a revenue or burn forecast. A future DSO profile revision may define fees and an associated economic model, but this iteration specifies neither a payment protocol nor concrete fee assumptions. Any future model must identify its network, period, eligible population, governance parameters, and adoption assumptions.
 
 <a id="dso-registry-discovery"></a>
 #### DSO Registry Discovery
@@ -602,40 +639,42 @@ Clients obtain the DSO Registry discovery declaration from the deployment's publ
 
 TODO: inline the explanations from the source code
 
-- for now see the [source code here](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-271a41476c5ed80c77cbe363f39cc58f5f422a6c9991cfc2fa2bd65398802d7eR105)
+- define profile-specific DSO registry limits in the normative deployment documentation
 
 ## Motivation
 
-Canton Network applications increasingly need to publish and discover public credentials for service discovery, party profiles, name resolution, and identity or KYC integrations. The off-ledger Asset Registry API discovery requirements in CIP-56 provide a related precedent for reusable service discovery, with CIP-56 retaining its own Asset Registry endpoint semantics. A common public credential registry and read APIs allow applications to discover credential-related information consistently and provide reusable building blocks for credentials issued under application-specific policies.
+Canton Network applications increasingly need to publish and discover credential information for service discovery, party profiles, name resolution, and identity or KYC integrations. The off-ledger Asset Registry API discovery requirements in CIP-56 provide a related precedent for reusable service discovery, with CIP-56 retaining its own Asset Registry endpoint semantics. Common credential read APIs allow applications to discover credential-related information consistently while deployments retain control of endpoint exposure and caller access.
 
-This CIP defines a portable base credential, registry APIs for registry-enabled credentials, and a public DSO shared-registry deployment profile. In this increment, one DSO Party, collectively controlled by all SVs, administers and operates one logical DSO Credential Registry while credential issuance and interpretation remain with issuers and consuming applications. Registry administration does not make the DSO Party the universal issuer, holder, custodian, or other stakeholder of all public credentials.
+This CIP defines a portable base credential, registry interfaces, access-policy-neutral HTTP read APIs for exposed credential records, and a DSO shared-registry deployment profile. In this increment, one DSO Party, collectively controlled by all SVs, administers and operates one logical DSO Credential Registry while credential issuance, interpretation, and access policy remain with issuers, consuming applications, and the deployment as applicable. Registry administration does not make the DSO Party the universal issuer, holder, custodian, or other stakeholder of all credentials.
 
 ## Rationale
 
 <a id="use-case-analysis"></a>
 ### Use-Case and Design Requirements
 
-The base credential, registry capability and APIs, and DSO profile are building blocks for the visibility-classified examples above. The following sketches remain informative: they demonstrate the building blocks but do not standardize issuer verification, legal reliance, or application-specific authorization. Future CIPs may standardize common subject properties and resolution mechanisms.
+The base credential, registry capability and APIs, and DSO profile are building blocks for the exposure-policy examples below. The following sketches remain informative: they demonstrate deployment choices but do not define Layer 1 classifications or standardize issuer verification, legal reliance, or application-specific authorization. Future CIPs may standardize common subject properties and resolution mechanisms.
 
-#### Visibility Use Cases and Boundaries (Informative)
+#### Exposure Use Cases and Boundaries (Informative)
 
-Short examples are:
-* **Public:** token metadata; public service discovery, profiles, and name resolution; and deliberate publication of bond term-sheet metadata. Bond publication should normally contain a content hash, version, effective date, status, and URI. It does not imply that investor allocations or private terms are stored on-ledger.
-* **Restricted:** KYC verification status when its issuer and holder do not intend unrestricted publication.
-* **Private:** KYC evidence, personal details, and supporting documents, which are outside the public DSO registry.
+Example deployment choices include:
+* A deployment can expose token metadata, service discovery, profiles, name resolution, or deliberately published bond term-sheet metadata without caller authentication. Bond publication should normally contain a content hash, version, effective date, status, and URI. It does not imply that investor allocations or private terms are stored on-ledger.
+* A deployment can require authenticated and authorized access to KYC verification status.
+* A deployment can decline to expose KYC evidence, personal details, and supporting documents through these APIs.
 
 Publication records who asserted data and makes the disclosed content inspectable. It does not by itself prove truth, regulatory quality, legal validity, or suitability for a consuming application's purpose.
 
 
-The design therefore separates publication and retrieval capability from the policy and legal decisions made by registry administrators, issuers, holders, and consuming applications. Public, restricted, and private modes are protocol capabilities; concrete DSO publication policy belongs to the deployment profile.
+The design separates record and history retrieval from the policy and legal decisions made by registry administrators, issuers, holders, deployments, and consuming applications. These examples are deployment policies, not protocol record classes.
 
 #### Decisions, Alternatives, and Deferred Questions
 
-The current design uses `NonEmpty CredentialSubject`, with each subject carrying `id : Optional W3C_VC_Identifier` and `claims : TextMap Api.Token.MetadataV1.AnyValue`; `CredentialView.issuer` uses the same identifier representation non-optionally with distinct issuer semantics. The identifier ADT distinguishes Canton-native `Party` identifiers from profile-permitted and validated external identifiers, which are not automatically DIDs. A present subject ID serializes as `credentialSubject.id`; an absent ID omits that property while the subject may still carry claims. Each claim entry flattens to a direct property on the external W3C subject object; no `claims` wrapper is serialized. Multi-valued claims use `AV_List`, and `id` remains a separate field and a reserved claim key. The wrapper and triple alternatives are closed for this draft. `AnyValue` provides Canton-native typed values, including recursive lists and maps, but the exact mapping of arbitrary nested values into JSON-LD remains unresolved. Layer 2 likewise selects namespaced subject properties resolved through Credential Registry APIs for the current candidate; DID-based discovery remains a future path. External serialization and context rules, the exact Party-to-URI-or-DID mapping, treatment of the Canton holder extension, status/schema/evidence extension profiles, OpenAPI alignment for pagination, and liability for cross-organization KYC reliance remain unresolved.
+Generic interfaces contain cross-profile credential and registry semantics. Product-specific interface instances, such as a `FeaturedAppRight` credential instance, belong in their owning profile or CIP; this scope principle does not remove the generic interfaces defined here.
+
+The current design uses `NonEmpty CredentialSubject`, with each subject carrying `id : Optional W3C_VC_Identifier` and `claims : TextMap Api.Token.MetadataV1.AnyValue`; `CredentialView.issuer` uses the same identifier representation non-optionally with distinct issuer semantics. The identifier ADT distinguishes Canton-native `Party` identifiers from profile-permitted and validated external identifiers, which are not automatically DIDs. A present subject ID serializes as `credentialSubject.id`; an absent ID omits that property while the subject may still carry claims. Each claim entry flattens to a direct property on the external W3C subject object; no `claims` wrapper is serialized. Multi-valued claims use `AV_List`, and `id` remains a separate field and a reserved claim key. The wrapper and triple alternatives are closed for this draft. `AnyValue` provides Canton-native typed values, including recursive lists and maps, but the exact mapping of arbitrary nested values into JSON-LD remains unresolved. Layer 2 likewise selects namespaced subject properties resolved through Credential Registry APIs for the current candidate; DID-based discovery remains a future path. External serialization and context rules, the exact Party-to-URI-or-DID mapping, treatment of the Canton holder extension, status/schema/evidence extension profiles, and liability for cross-organization KYC reliance remain unresolved.
 
 ## Scope and Non-Goals
 
-This CIP defines the Base Credential Contract Standard, the Credential Registry Interface and API Standard, Application and Metadata Discovery, and a public DSO Credential Registry Deployment Profile. The first increment includes a registry-independent credential surface plus a registry capability, backend, and APIs that apply only to registry-enabled credentials, namespaced discovery declarations, and one logical DSO Credential Registry administered and operated by the DSO Party collectively controlled by all SVs. The DSO profile does not currently define partitions, namespace assignments, delegated operation, or Scan-based routing. Multiple access endpoints, if provided, identify the same logical registry and do not prescribe its physical hosting topology.
+This CIP defines the Base Credential Contract Standard, the Credential Registry Interface and API Standard, Application and Metadata Discovery, and a DSO Credential Registry Deployment Profile. The first increment includes a registry-independent credential surface, a registry capability and backend, access-policy-neutral HTTP read interfaces for exposed credential records, namespaced discovery declarations, and one logical DSO Credential Registry administered and operated by the DSO Party collectively controlled by all SVs. The standard requires active record retrieval and capability declarations for inactive records and event history; it does not require a particular deployment to expose an endpoint to every caller. The DSO profile does not currently define partitions, namespace assignments, delegated operation, or Scan-based routing. Multiple access endpoints, if provided, identify the same logical registry and do not prescribe its physical hosting topology.
 
 The `credentialSubject` collection and subject-local typed properties are semantically aligned with the W3C model, but the draft does not claim complete conformance. A conforming external representation additionally requires the mandated `@context`, a `type` including `VerifiableCredential`, URL identifiers, and a securing mechanism. External object-versus-array encoding, mappings for Canton-native `Party` and `ContractId` values, JSON-LD interpretation of `AV_List` and `AV_Map`, context processing, and extension profiles for concerns such as credential status, schema, and evidence remain outside or open.
 
@@ -647,37 +686,34 @@ This roadmap is non-normative. Candidate future iterations are not current behav
 * **Candidate future scaling and partitioning:** may evaluate registry partitions, namespace assignment, migration, routing history, and replication or consistency models. Any such model requires a future specification and must define its correctness and operational boundaries.
 * **Candidate future delegated operation:** may evaluate Validator-operated infrastructure, delegation and authorization, incentives, accountability, and operational requirements. Evaluation does not imply adoption; delegated operation requires a future specification.
 * **Candidate future access and routing evolution:** may evaluate Scan integration, proxies, route selection, multiple endpoints, high availability, and BFT reads. These are possible designs rather than current requirements and require a future specification.
-* **Candidate future credential lifecycle and status:** may specify credential revocation, suspension and resumption, with explicit Party-based authorization when the issuer identifier may be external text; decide whether lifecycle state replaces the canonical credential contract or uses a separate lifecycle/status contract; distinguish revocation and suspension from intrinsic `validUntil` expiry, holder relinquishment, Daml archival, and registry removal or deregistration; define interaction with consuming holder replacement; and reconsider holder-authorized archival. Frequent independently mutable or holder-private relationships may motivate separate holder-association contracts, which are not part of this iteration. This requires future specification and approval.
-* **Other deferred work:** includes private encrypted holder storage, a full W3C VC profile or Canton DID method, DID-based service discovery and migration rules, and complete issuance, presentation, and selective-disclosure protocols.
-
-## Backwards Compatibility
-
-This iteration is semantically breaking relative to the earlier draft interfaces and prototypes. `CredentialView` loses registry fields, public fetch moves to `RegisteredCredential`, and the candidate factory is renamed and narrowed to registered credentials. In addition, `credentialSubject` changes from one record to `NonEmpty CredentialSubject`; its optional text identifier becomes an optional shared `W3C_VC_Identifier` ADT with `W3C_VC_Identifier_Party Party` and `W3C_VC_Identifier Text` variants, which is also used by `CredentialView.issuer`; `holders` becomes `NonEmpty Party`; generic issuer archival is removed in favor of profile-defined explicit Party authorization where needed; the subject map field is renamed from `properties` to `claims`; each claim entry flattens to a direct property on the external W3C subject object without serializing a `claims` wrapper; the custom `Claims` and `Claim` wrappers remain removed; and `validFrom` and `validUntil` move to top-level `CredentialView`. Credential `id` and `credentialTypes` are also explicit top-level fields. The checked-in candidate interface source now provides the directly consultable model, including the recommended registry factory surface. Using the imported value type adds a direct dependency on `splice-api-token-metadata-v1`; package-version changes can alter generated APIs. Existing prototype/reference Daml implementations, code-generated bindings, and clients that construct, project, query, serialize, or exercise the previous surfaces must migrate together; external profiles must also define contexts, the one-object versus array encoding, issuer and value identifier mappings, and recursive mappings for maps and lists.
-
-Because this document remains `Early Draft` with `CIP TBD`, the split can be made in the draft before standardization. That status does not make it additive and does not eliminate migration work. Implementations may provide temporary aliases or adapters for the old `CredentialFactory` names, but this CIP does not specify a concrete V2 package until the package and SDK compile spike is completed.
-
-We expect that the future CIP that standardizes CNS (potentially including identity verification) will also be constructed such that:
-
-* CNS 1.0 entries are properly integrated; and
-* existing name issuance and identity verification services can integrate into the unified system.
+* **Candidate future lifecycle extensions:** may define general reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, standalone retention updates, status-list integration, detailed lineage or version state, history contracts, reason vocabularies, or mandatory lifecycle-on-registration. None is current normative behavior. Future work must preserve the distinction between intrinsic validity, registry retention, renewal, and holder operations.
+* **Candidate future holder and registry extensions:** may define separate holder-association contracts, registry-removal semantics, or private encrypted holder storage without bypassing the standardized holder choices.
+* **Candidate future payment profile:** may use a TSv1 transfer compatibility pattern as optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. A future specification MUST resolve target and payer authorization, receiver, asset and pricing, atomicity with renewal, replay and idempotency, failure and refund behavior, finality, concurrency control, privacy, metadata validation, auditability, and exact Daml and API integration. No payment protocol or receiver/memo convention is adopted here.
+* **Other deferred work:** includes a full W3C VC profile or Canton DID method, DID-based service discovery, and complete issuance, presentation, and selective-disclosure protocols.
 
 ## Reference Implementation
 
-The checked-in [`interfaces/`](interfaces/) project contains the candidate Daml interface source used by this CIP. It intentionally leaves production issuer revocation, registry removal, governance, and concrete authorization to profiles.
+The checked-in [`demo/interface/`](demo/interface/) project contains the candidate Daml interface source used by this CIP. The companion [`demo/model/`](demo/model/) project contains concrete demo templates for credentials and the nonconsuming factory, and [`demo/test/`](demo/test/) contains seed and lifecycle tests. Production governance, registry removal policy, stakeholder visibility, and any authorization beyond the explicit issuer and registry-administrator Parties remain profile-specific.
 
-The non-normative [`demo/`](demo/) is a local PQS-backed reference implementation. It builds a concrete Daml template against the candidate interfaces, allocates synthetic parties, submits deterministic credentials through ledger commands, runs PQS 3.4.1 with PostgreSQL, and exposes a small Java 21/Javalin JDBC API. Run it with `make build`, `make up`, `make daml-test`, `make seed`, and `make smoke-test` from `demo/`.
+The non-normative [`demo/`](demo/) is a local PQS-backed reference implementation. It builds the candidate interface, concrete model, and seed/test packages with Daml SDK/DPM 3.5.11 targeting LF 2.2, allocates synthetic parties, submits deterministic credentials through ledger commands, runs Canton 3.5.11 and PQS 3.5.8 with PostgreSQL, and exposes a small Java 21/Quarkus 3.23.2 JDBC API. Canton 3.5.11 supports protocol 35, while the active sandbox configuration leaves protocol selection to the supported runtime default rather than conflating it with LF 2.2. The demo implements active exact lookup and active bulk retrieval for both intrinsic and registered resource families, uses canonical `/v1` paths, and advertises no inactive-record or event-history capability. Run it with `make build`, `make up`, `make daml-test`, `make seed`, and `make smoke-test` from `demo/`.
 
 The in-process Daml seed/test verifies the 360-credential fixture. A partial live PQS run verified 36 `Credential` and 36 `RegisteredCredential` projections. A fresh full 300+ live validation was blocked by intermittent Canton synchronizer readiness with `PACKAGE_SERVICE_CANNOT_AUTODETECT_SYNCHRONIZER`; the complete 360-record PQS/API path is not claimed as fully live-validated.
 
 The demo uses a deliberately simple authority model, public synthetic data, no production authentication, one sandbox participant, and offset pagination without snapshot consistency. It is evidence for the shape of the candidate flow, not a production registry, security profile, endorsement, or resolution of open governance questions. See the [demo README](demo/README.md) for pinned versions, verified limitations, and troubleshooting.
 
-An earlier HTTP and Daml implementation is available on [this Splice PR](https://github.com/hyperledger-labs/splice/pull/3416); it predates the base/registry split and remains historical reference input.
+## References
+
+- [Credential Registry API v1 OpenAPI source](demo/interface/openapi/credential-registry-v1.yaml) is the normative HTTP interface contract for this draft.
+- [Historical Daml draft](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-808147bf36f1c087a42b92d67d2021c2ca203076cc0e3b6a31f2ccc60497a34d) is non-normative reference material.
+- [Historical HTTP draft](https://github.com/hyperledger-labs/splice/pull/3416/changes#diff-a73145dfdb26770f01b5fc0a9f35c7c34f067584acb6ec16de7e82040df6f835) is non-normative reference material.
 
 ## Copyright
 
 This CIP is licensed under CC0-1.0: [Creative Commons CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 
 ## Changelog
+
+Sep 21, 2026: retained the compile-valid `CredentialView.credentialTypes` field because `type` is a reserved Daml keyword; W3C serializers map it to JSON-LD `type`
 
 Sep 18, 2026: standardized holder self-removal as a consuming holder-controlled replacement that preserves credential and registration state, rejects non-holders and final-holder removal, retains remaining holder order, and leaves concrete creation authorization profile-specific
 
@@ -737,12 +773,12 @@ The current iteration selects `NonEmpty CredentialSubject`, enforcing `1..n` sub
 - Confirm concrete-template signatories and the observer mechanism that makes all designated holders stakeholders when they require normal ledger visibility. Concrete holder self-removal must satisfy replacement-creation authorization without inventing issuer or signatory policy.
 - Define precise registry removal, archive, expiry, and status semantics, including authorization and replacement behavior.
 - Evaluate separate holder-association contracts only if frequent independently mutable or holder-private relationships require them; they must not bypass `Credential_RemoveSelfAsHolder` or imply relationships between subjects and Parties.
-- Keep the checked-in candidate `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory` interface source compile-validated against a compatible SDK and metadata DAR. Concrete templates exposing the relevant interfaces, their signatories, and client projection examples remain future work.
+- Keep the checked-in candidate `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory` interface source, demo templates, lifecycle tests, and client projections compile-validated against a compatible SDK and metadata DAR. Production profile templates and governance remain future work.
 
 #### Pagination Semantics
 
 - **Resolved for this candidate API:** Bulk retrieval uses bounded, zero-based `page` and `pageSize`, deterministic ordering with a contract-ID tie-breaker, and `hasNext` derived from a `pageSize + 1` query. Offset pagination is not snapshot-consistent; concurrent changes can shift boundaries and produce duplicates or omissions across pages.
-- **OpenAPI alignment remains open:** The external credential-registry OpenAPI must define the concrete request and response schema, default and maximum page sizes, supported filters, ordering, and client errors for invalid page values. It must not describe cursor or snapshot guarantees that contradict this candidate API.
+- **Resolved in the local OpenAPI source:** [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) defines Registry Info and capabilities, exact lookup, bulk record retrieval, separate event history, default and maximum page sizes, lifecycle scope, supported filters, deterministic ordering, responses, and client errors. It specifies offset pagination without cursor or snapshot guarantees.
 - **Vladislav Kokosh (Jan 20, 11:59 PM):** Asked for explicit total ordering to avoid ambiguity when records share the same primary sort value.
 - **Simon Meier (Jan 23, 4:48 PM):** Agreed and noted OpenAPI definitions will make this explicit.
 

@@ -1,0 +1,11 @@
+sdk-version: 3.5.11
+name: canton-network-credentials-interfaces
+source: daml
+version: 0.1.0
+build-options:
+  - --target=2.2
+dependencies:
+  - daml-prim
+  - daml-stdlib
+data-dependencies:
+  - ../.deps/splice-api-token-metadata-v1-1.0.0.dar

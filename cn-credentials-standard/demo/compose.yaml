@@ -1,6 +1,25 @@
+name: cn-credential-demo
+
 services:
-  postgres:
-    image: postgres:16.6-alpine
+  credential-artifacts:
+    build:
+      context: ../..
+      dockerfile: cn-credentials-standard/Dockerfile.daml
+      target: artifacts
+    entrypoint: ["/bin/cp"]
+    command:
+      - /artifacts/canton-network-credentials-interfaces-0.1.0.dar
+      - /artifacts/canton-network-credentials-demo-0.1.0.dar
+      - /artifacts/canton-network-credentials-demo-scripts-0.1.0.dar
+      - /out/
+    volumes:
+      - credential-artifacts:/out
+    networks:
+      - credential-network
+    restart: "no"
+
+  credential-postgres:
+    image: postgres:18.6-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pqs}
       POSTGRES_USER: ${POSTGRES_USER:-pqs}
@@ -11,45 +30,73 @@ services:
       timeout: 3s
       retries: 30
     volumes:
-      - pqs-data:/var/lib/postgresql/data
+      - credential-postgres-data:/var/lib/postgresql
+    networks:
+      - credential-network
 
-  canton:
-    image: digitalasset/daml-sdk:3.4.0-rc2
-    working_dir: /tmp
-    command:
-      - daml
-      - sandbox
-      - --port
-      - "6865"
-      - --json-api-port
-      - "7575"
-      - --config
-      - /workspace/config/sandbox.conf
-    volumes:
-      - ./:/workspace:ro
+  credential-canton:
+    build:
+      context: ..
+      dockerfile: Dockerfile.canton
     healthcheck:
-      test: ["CMD", "daml", "ledger", "list-parties", "--host", "localhost", "--port", "6865"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:7575/livez"]
       interval: 3s
-      timeout: 10s
-      retries: 40
+      timeout: 5s
+      retries: 60
     ports:
       - "${LEDGER_PORT:-6865}:6865"
+      - "${CANTON_HTTP_PORT:-7575}:7575"
+    networks:
+      - credential-network
 
-  dar-upload:
-    image: digitalasset/daml-sdk:3.4.0-rc2
+  credential-dar-upload:
+    build:
+      context: ../..
+      dockerfile: cn-credentials-standard/Dockerfile.daml
+      target: tools
     working_dir: /workspace
-    command: ["/workspace/scripts/upload-dar.sh"]
+    command: ["/workspace/scripts/upload-dars.sh"]
+    environment:
+      JSON_API_URL: http://credential-canton:7575
+      UPLOAD_TIMEOUT_SECONDS: ${UPLOAD_TIMEOUT_SECONDS:-240}
     volumes:
-      - ./:/workspace:ro
+      - credential-artifacts:/artifacts:ro
+      - ./scripts:/workspace/scripts:ro
     depends_on:
-      canton:
+      credential-artifacts:
+        condition: service_completed_successfully
+      credential-canton:
         condition: service_healthy
+    networks:
+      - credential-network
+    restart: "no"
 
-  pqs:
-    image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.4.1
+  credential-seed:
+    build:
+      context: ../..
+      dockerfile: cn-credentials-standard/Dockerfile.daml
+      target: tools
+    working_dir: /workspace
+    command: ["/workspace/scripts/seed.sh"]
+    environment:
+      LEDGER_HOST: credential-canton
+      LEDGER_PORT: "6865"
+      SEED_TIMEOUT_SECONDS: ${SEED_TIMEOUT_SECONDS:-300}
+    volumes:
+      - credential-artifacts:/artifacts:ro
+      - ./scripts:/workspace/scripts:ro
+    depends_on:
+      credential-dar-upload:
+        condition: service_completed_successfully
+    networks:
+      - credential-network
+    restart: "no"
+
+  credential-pqs:
+    image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.5.8
     command: ["pipeline", "ledger", "postgres-document"]
     environment:
-      SCRIBE_SOURCE_LEDGER_HOST: canton
+      SCRIBE_SOURCE_LEDGER_HOST: credential-canton
       SCRIBE_SOURCE_LEDGER_PORT: "6865"
       SCRIBE_SOURCE_LEDGER_AUTH: NoAuth
       SCRIBE_SOURCE_LEDGER_USER: participant_admin
@@ -57,35 +104,75 @@ services:
       SCRIBE_PIPELINE_FILTER_PARTIES: "*"
       SCRIBE_PIPELINE_FILTER_CONTRACTS: "*"
       SCRIBE_PIPELINE_FILTER_METADATA: "*"
-      SCRIBE_TARGET_POSTGRES_HOST: postgres
+      SCRIBE_TARGET_POSTGRES_HOST: credential-postgres
       SCRIBE_TARGET_POSTGRES_PORT: "5432"
       SCRIBE_TARGET_POSTGRES_DATABASE: ${POSTGRES_DB:-pqs}
       SCRIBE_TARGET_POSTGRES_USERNAME: ${POSTGRES_USER:-pqs}
       SCRIBE_TARGET_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
       SCRIBE_HEALTH_ADDRESS: 0.0.0.0
       SCRIBE_HEALTH_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "/busybox", "wget", "--spider", "-q", "-T", "3", "http://localhost:8080/livez"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./tools/busybox:/busybox:ro
     depends_on:
-      postgres:
+      credential-postgres:
         condition: service_healthy
-      dar-upload:
+      credential-seed:
         condition: service_completed_successfully
     ports:
       - "${PQS_HEALTH_PORT:-8081}:8080"
+    networks:
+      - credential-network
 
-  api:
+  credential-projection-waiter:
+    image: postgres:18.6-alpine
+    entrypoint: ["/workspace/scripts/wait-for-projections.sh"]
+    environment:
+      PGHOST: credential-postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-pqs}
+      PGUSER: ${POSTGRES_USER:-pqs}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+      CREDENTIAL_SEED_COUNT: ${CREDENTIAL_SEED_COUNT:-360}
+      PROJECTION_TIMEOUT_SECONDS: ${PROJECTION_TIMEOUT_SECONDS:-300}
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+    depends_on:
+      credential-postgres:
+        condition: service_healthy
+      credential-pqs:
+        condition: service_healthy
+    networks:
+      - credential-network
+    restart: "no"
+
+  credential-api:
     build: ./java-api
     environment:
-      API_PORT: "8080"
-      PQS_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pqs}
+      CREDENTIALS_HTTP_PORT: "8080"
+      PQS_JDBC_URL: jdbc:postgresql://credential-postgres:5432/${POSTGRES_DB:-pqs}
       PQS_DB_USER: ${POSTGRES_USER:-pqs}
       PQS_DB_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
     depends_on:
-      postgres:
-        condition: service_healthy
-      pqs:
-        condition: service_started
+      credential-projection-waiter:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/q/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
     ports:
-      - "${API_PORT:-8080}:8080"
+      - "${CREDENTIALS_API_PORT:-8080}:8080"
+    networks:
+      - credential-network
 
 volumes:
-  pqs-data:
+  credential-artifacts:
+  credential-postgres-data:
+
+networks:
+  credential-network:

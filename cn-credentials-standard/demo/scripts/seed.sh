@@ -1,23 +1,24 @@
 #!/bin/sh
 set -eu
 
-DAR="daml/.daml/dist/canton-network-credentials-demo-0.1.0.dar"
+LEDGER_HOST=${LEDGER_HOST:-canton}
+LEDGER_PORT=${LEDGER_PORT:-6865}
+SCRIPTS_DAR=/artifacts/canton-network-credentials-demo-scripts-0.1.0.dar
 
-if [ ! -f "$DAR" ]; then
-  printf '%s\n' "Build the demo first with make build." >&2
+[ -f "$SCRIPTS_DAR" ] || {
+  printf '%s\n' "Scripts DAR is missing from the Compose artifact volume: $SCRIPTS_DAR" >&2
+  exit 1
+}
+
+if ! /workspace/scripts/retry.sh "credential seed submission" "${SEED_TIMEOUT_SECONDS:-300}" \
+    dpm script \
+    --dar "$SCRIPTS_DAR" \
+    --script-name Canton.Network.Credentials.Seed:main \
+    --ledger-host "$LEDGER_HOST" \
+    --ledger-port "$LEDGER_PORT" \
+    --upload-dar no; then
+  printf '%s\n' "Credential seeding failed. The ephemeral Canton ledger may already contain the deterministic fixture." >&2
   exit 1
 fi
 
-until daml ledger list-parties --host localhost --port "${LEDGER_PORT:-6865}" >/dev/null 2>&1; do
-  printf '%s\n' "Waiting for the Canton Ledger API..."
-  sleep 2
-done
-
-daml script \
-  --dar "$DAR" \
-  --script-name Canton.Network.Credentials.Seed:main \
-  --ledger-host localhost \
-  --ledger-port "${LEDGER_PORT:-6865}" \
-  --upload-dar yes
-
-printf '%s\n' "Submitted 360 deterministic demo credentials. Re-run only against a fresh demo volume; logical IDs are intentionally stable."
+printf '%s\n' "Submitted 360 deterministic demo credentials to the ephemeral Canton ledger."
