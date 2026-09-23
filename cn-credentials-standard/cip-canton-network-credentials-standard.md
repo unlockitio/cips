@@ -67,7 +67,7 @@ Layer 1 defines Daml interfaces for the base `Credential`, `RegisteredCredential
 
 #### Daml Interfaces
 
-The three candidate Daml interfaces are `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`. Their candidate definitions are checked in at [`demo/interface/daml/Canton/Network/Credentials/V1.daml`](demo/interface/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`demo/interface/README.md`](demo/interface/README.md); concrete templates, package naming for standardization, and signatories remain outside that source.
+The four candidate credential Daml interfaces are `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`; `CredentialRegistryFactory` provides the separate generic issuance capability. Their candidate definitions are checked in at [`demo/interface/daml/Canton/Network/Credentials/V1.daml`](demo/interface/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`demo/interface/README.md`](demo/interface/README.md); concrete templates, package naming for standardization, and signatories remain outside that source.
 
 ##### Credential Interface
 
