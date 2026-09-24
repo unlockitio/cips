@@ -2,6 +2,7 @@ package io.unlockit.application.credential.api;
 
 import io.unlockit.application.credential.dto.ErrorResponse;
 import io.unlockit.domain.credential.exception.CredentialNotFoundException;
+import io.unlockit.domain.credential.exception.CredentialRegistryNotFoundException;
 import io.unlockit.domain.credential.exception.DuplicateCredentialException;
 import io.unlockit.domain.credential.exception.InvalidPaginationException;
 import io.unlockit.domain.credential.exception.PqsUnavailableException;
@@ -21,7 +22,8 @@ public class CredentialExceptionMapper implements ExceptionMapper<RuntimeExcepti
     if (exception instanceof InvalidPaginationException) {
       return response(Response.Status.BAD_REQUEST, exception.getMessage());
     }
-    if (exception instanceof CredentialNotFoundException) {
+    if (exception instanceof CredentialNotFoundException
+        || exception instanceof CredentialRegistryNotFoundException) {
       return response(Response.Status.NOT_FOUND, exception.getMessage());
     }
     if (exception instanceof DuplicateCredentialException) {

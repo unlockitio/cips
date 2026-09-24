@@ -21,6 +21,9 @@ class PqsCredentialQueryClientTest {
   private static final String REGISTRATION = """
       {"registryAdmin":"admin","registeredAt":"2026-09-18T00:00:00Z","expiresAt":"2026-12-17T00:00:00Z","meta":{},"internal":"excluded"}
       """;
+  private static final String FACTORY = """
+      {"registryAdmin":"admin","issuer":"issuer"}
+      """;
 
   @Test
   void mapsIntrinsicAndRegisteredPayloadsSeparately() throws Exception {
@@ -74,6 +77,34 @@ class PqsCredentialQueryClientTest {
   }
 
   @Test
+  void mapsAndQueriesLogicalRegistriesThroughFactoryProjection() throws Exception {
+    var mapper = new PqsCredentialQueryClient(null, new ObjectMapper());
+    var factory = mapper.mapCredentialRegistryFactory("factory-contract", FACTORY);
+    assertEquals("admin", factory.registryAdmin());
+    assertEquals("issuer", factory.issuer());
+
+    AgroalDataSource dataSource = mock(AgroalDataSource.class);
+    Connection connection = mock(Connection.class);
+    PreparedStatement statement = mock(PreparedStatement.class);
+    ResultSet rows = mock(ResultSet.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.prepareStatement(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_IDS_SQL))
+        .thenReturn(statement);
+    when(statement.executeQuery()).thenReturn(rows);
+    when(rows.next()).thenReturn(false);
+
+    new PqsCredentialQueryClient(dataSource, new ObjectMapper())
+        .findCredentialRegistryIds(100, 51);
+
+    verify(statement).setString(1, PqsCredentialQueryClient.CREDENTIAL_REGISTRY_FACTORY_INTERFACE);
+    verify(statement).setInt(2, 51);
+    verify(statement).setLong(3, 100);
+    assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_IDS_SQL.contains("group by"));
+    assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_IDS_SQL.contains("registryAdmin"));
+    assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_FACTORIES_SQL.contains("issuer"));
+  }
+
+  @Test
   void queriesUseDocumentedPqsFunctionsAndDeterministicOrder() {
     assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_BY_ID_SQL.contains("active(?)"));
     assertFalse(PqsCredentialQueryClient.FIND_CREDENTIAL_BY_ID_SQL.contains("join"));
@@ -81,5 +112,9 @@ class PqsCredentialQueryClientTest {
     assertTrue(PqsCredentialQueryClient.FIND_REGISTERED_PAGE_SQL.contains("c.contract_id"));
     assertTrue(PqsCredentialQueryClient.FIND_REGISTERED_PAGE_SQL.contains("limit ? offset ?"));
     assertFalse(PqsCredentialQueryClient.FIND_REGISTERED_PAGE_SQL.contains("__"));
+    assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_IDS_SQL.contains("active(?)"));
+    assertTrue(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_FACTORIES_SQL.contains("active(?)"));
+    assertFalse(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_IDS_SQL.contains("__"));
+    assertFalse(PqsCredentialQueryClient.FIND_CREDENTIAL_REGISTRY_FACTORIES_SQL.contains("__"));
   }
 }

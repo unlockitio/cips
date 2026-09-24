@@ -1,0 +1,4 @@
+nodes.local.start()
+bootstrap.synchronizer_local()
+`credential-participant`.synchronizers.connect_local(`credential-sequencer`, alias = "credential-synchronizer")
+java.nio.file.Files.writeString(java.nio.file.Paths.get("/tmp/canton-bootstrap-ready"), "ready\n")

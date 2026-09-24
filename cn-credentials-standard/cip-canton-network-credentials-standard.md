@@ -63,7 +63,7 @@ This is the initial DSO deployment profile. Future iterations may define additio
 
 ### Layer 1: Credential Contract and Registry Standards
 
-Layer 1 defines Daml interfaces for the base `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`, and HTTP interfaces for registry information, lookup, and bulk retrieval. Credential Lifecycle relates intrinsic validity, registration lifecycle, and archival or removal behavior. A base credential can exist without registration.
+Layer 1 defines Daml interfaces for the base `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`, and HTTP interfaces for credential registry discovery, lookup, and bulk retrieval. Credential Lifecycle relates intrinsic validity, registration lifecycle, and archival or removal behavior. A base credential can exist without registration.
 
 #### Daml Interfaces
 
@@ -337,7 +337,7 @@ The HTTP interfaces define two distinct read-resource families for records that 
 
 Layer 1 does not classify records as public, restricted, or private and does not decide who may call an endpoint or receive a record. Deployments and implementors define endpoint exposure, filtering, authentication, authorization, and audience, independently of Daml stakeholder visibility. Conformance to these interfaces neither requires unauthenticated access nor grants access to any credential. The same operation and response schemas apply regardless of the deployment's access policy.
 
-The normative HTTP contract is the local [Credentials API v1 OpenAPI source](demo/interface/openapi/credential-registry-v1.yaml), with `/v1` as its canonical base path. It defines family-specific capabilities, exact logical-ID lookup, bounded bulk retrieval, filters, lifecycle scope, separate event-history operations, pagination, ordering, responses, and errors. Compatible aliases such as `/api/v1` are non-normative and, when retained, MUST be documented as deprecated mappings with identical semantics.
+The normative HTTP contract is the local [Credentials API v1 OpenAPI source](demo/interface/openapi/credential-registry-v1.yaml), with `/v1` as its canonical base path. It defines logical credential-registry discovery, family-specific capabilities, exact logical-ID lookup, bounded bulk retrieval, filters, lifecycle scope, separate event-history operations, pagination, ordering, responses, and errors. Compatible aliases such as `/api/v1` are non-normative and, when retained, MUST be documented as deprecated mappings with identical semantics.
 
 ##### PQS-backed Read Model and Request Flows
 
@@ -348,7 +348,7 @@ The intrinsic credential family reads active `Credential` projections directly. 
 Inactive or archived record projections are distinct from active interface projections. Ledger transaction or event history is also distinct from record retrieval because events can have different fields, cardinality, and ordering. This CIP does not assert that PQS provides a stable inactive or archived SQL reader: current evidence establishes `active(...)`, but no stable archived or inactive PQS SQL reader. Consequently:
 
 - Every conforming implementation MUST support active record retrieval.
-- An implementation MUST advertise whether `inactiveRecords` and `eventHistory` are supported in Registry Info.
+- An implementation MUST advertise whether `inactiveRecords` and `eventHistory` are supported in each credential registry item.
 - An implementation advertising inactive-record retrieval MUST document the implementation-specific backing that supplies those records and the lifecycle-state semantics.
 - An implementation advertising event history MUST expose it through the separate event-history operation and schema, document its backing and ordering, and MUST NOT mix events into credential-record result pages.
 - An implementation that does not advertise a lifecycle capability MUST reject requests requiring it as described by the OpenAPI contract; it MUST NOT fabricate historical records from active projections.
@@ -359,11 +359,15 @@ These requirements allow explorers and other authorized clients to query lifecyc
 
 *PQS-backed HTTP read sequence. [PlantUML source](images/credentials-http-api-sequence.puml).*
 
-A conforming implementation MUST provide logical indexes or equivalent access paths sufficient for the standard query patterns it advertises. The baseline access paths are exact logical credential ID, contract-ID association between projections, and deterministic ordering by logical credential ID with contract ID as the final tie-breaker. It MUST also provide access paths for every retained standard filter advertised by Registry Info. Implementations MAY add further indexes or access paths. This requirement is logical and does not prescribe PostgreSQL expressions, PQS helper signatures, physical table layouts, JSON storage, index names, or index-maintenance mechanisms.
+A conforming implementation MUST provide logical indexes or equivalent access paths sufficient for the standard query patterns it advertises. The baseline access paths are exact logical credential ID, contract-ID association between projections, and deterministic ordering by logical credential ID with contract ID as the final tie-breaker. It MUST also provide access paths for every retained standard filter advertised by the matching credential registry item. Implementations MAY add further indexes or access paths. This requirement is logical and does not prescribe PostgreSQL expressions, PQS helper signatures, physical table layouts, JSON storage, index names, or index-maintenance mechanisms.
 
-##### Credential Registry Info API
+##### Credential Registries API
 
-Registry Info enables API-version rollout and reports each resource family's capabilities and constraints independently. It MUST identify the API version and, for both credentials and registered credentials, active, inactive-record, and event-history capabilities; supported lifecycle scopes and filters; and default and maximum page sizes. It MAY report additional implementation limits, including limits on subject claims or stored credentials. See [DSO Credential Registry Limits](#dso-credential-registry-limits).
+`GET /v1/credential-registries` discovers logical credential registries and `GET /v1/credential-registries/{registryId}` retrieves one exact registry. In v1, `registryId` MUST be the canonical string form of the registry administrator Party and MUST equal `registryAdmin`. A factory contract ID MUST NOT be used as registry identity. Every active `CredentialRegistryFactory` projection with the same `registryAdmin` belongs to one logical registry. Its subordinate `issuanceFactories` references MUST expose `contractId` and `issuer` and MUST be ordered by issuer and then contract ID.
+
+A registry item enables API-version rollout and reports each resource family's capabilities and constraints independently. It MUST identify the API version and, for both credentials and registered credentials, active, inactive-record, and event-history capabilities; supported lifecycle scopes and filters; and default and maximum page sizes. It MAY report additional implementation limits, including limits on subject claims or stored credentials. See [DSO Credential Registry Limits](#dso-credential-registry-limits).
+
+The collection MUST page distinct logical `registryAdmin` values before loading and aggregating their factory rows, so one logical registry is never split across pages. It uses the common zero-based pagination contract with default page size `50`, maximum `100`, `pageSize + 1` look-ahead, deterministic ascending `registryId` ordering, and an `items`, `page`, `pageSize`, `hasNext` response without a total count. Exact unknown registry lookup MUST return `404`. Registry collection pagination is offset-based and does not provide snapshot consistency; concurrent factory changes can cause duplicates or omissions across page requests.
 
 ##### Credential Lookup API
 
@@ -378,7 +382,7 @@ Bulk retrieval returns projections from the selected resource family for the req
 Pagination requirements are normative:
 
 - `page` MUST be a zero-based integer and defaults to `0`.
-- `pageSize` MUST be a positive integer. The declared default is `50` and the declared maximum is `100` unless Registry Info declares different values permitted by a future compatible profile.
+- `pageSize` MUST be a positive integer. The declared default is `50` and the declared maximum is `100` unless the matching credential registry item declares different values permitted by a future compatible profile.
 - An implementation MUST reject invalid values, values above the declared maximum, and offsets it cannot represent safely.
 - The offset MUST be `page * pageSize`.
 - Ordering MUST be deterministic. Credential-record pages MUST order by logical credential ID and use contract ID as the final tie-breaker after any other declared sort keys.
@@ -582,7 +586,7 @@ The current profile does not partition registry state or workload by issuer name
 
 *Container view of the DSO Public Credential Issuance Application instance and its one logical DSO Credential Registry. Physical hosting topology is intentionally unspecified. [C4-PlantUML source](images/credentials-containers.puml).*
 
-The DSO profile applies the generic registry and discovery surfaces defined by Layers 1 and 2. Registry Info advertises the DSO Registry's constraints, API version, required read capabilities, supported lifecycle scopes and filters, pagination limits, and endpoint information. A profile-specific registration capability is additionally required if registration is restricted to internal workflows. Clients and explorers use the published endpoint information without depending on the registry's physical storage or hosting topology. The following subsections define the DSO profile's concrete expiry, access, discovery, and operating model.
+The DSO profile applies the generic registry and discovery surfaces defined by Layers 1 and 2. The DSO credential registry item advertises the DSO Registry's constraints, API version, required read capabilities, supported lifecycle scopes and filters, pagination limits, and endpoint information. A profile-specific registration capability is additionally required if registration is restricted to internal workflows. Clients and explorers use the published endpoint information without depending on the registry's physical storage or hosting topology. The following subsections define the DSO profile's concrete expiry, access, discovery, and operating model.
 
 #### Concrete Expiry and Renewal Policy
 
@@ -778,7 +782,7 @@ The current iteration selects `NonEmpty CredentialSubject`, enforcing `1..n` sub
 #### Pagination Semantics
 
 - **Resolved for this candidate API:** Bulk retrieval uses bounded, zero-based `page` and `pageSize`, deterministic ordering with a contract-ID tie-breaker, and `hasNext` derived from a `pageSize + 1` query. Offset pagination is not snapshot-consistent; concurrent changes can shift boundaries and produce duplicates or omissions across pages.
-- **Resolved in the local OpenAPI source:** [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) defines Registry Info and capabilities, exact lookup, bulk record retrieval, separate event history, default and maximum page sizes, lifecycle scope, supported filters, deterministic ordering, responses, and client errors. It specifies offset pagination without cursor or snapshot guarantees.
+- **Resolved in the local OpenAPI source:** [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) defines credential registry discovery and capabilities, exact lookup, bulk record retrieval, separate event history, default and maximum page sizes, lifecycle scope, supported filters, deterministic ordering, responses, and client errors. It specifies offset pagination without cursor or snapshot guarantees.
 - **Vladislav Kokosh (Jan 20, 11:59 PM):** Asked for explicit total ordering to avoid ambiguity when records share the same primary sort value.
 - **Simon Meier (Jan 23, 4:48 PM):** Agreed and noted OpenAPI definitions will make this explicit.
 

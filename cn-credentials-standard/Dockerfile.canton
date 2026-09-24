@@ -16,7 +16,8 @@ RUN apt-get update \
     && /opt/canton/bin/canton --version
 
 COPY demo/canton/sandbox.conf /etc/canton/sandbox.conf
+COPY demo/canton/bootstrap.canton /etc/canton/bootstrap.canton
 
 EXPOSE 6865 7575
 ENTRYPOINT ["/opt/canton/bin/canton"]
-CMD ["daemon", "-c", "/etc/canton/sandbox.conf"]
+CMD ["daemon", "-c", "/etc/canton/sandbox.conf", "--bootstrap", "/etc/canton/bootstrap.canton"]

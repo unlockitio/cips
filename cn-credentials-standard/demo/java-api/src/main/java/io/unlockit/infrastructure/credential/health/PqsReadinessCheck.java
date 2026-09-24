@@ -22,9 +22,9 @@ public class PqsReadinessCheck implements HealthCheck {
   public HealthCheckResponse call() {
     try {
       queryClient.checkCredentialProjections();
-      return HealthCheckResponse.up("PQS Credential projections");
+      return HealthCheckResponse.up("PQS credential projections");
     } catch (PqsUnavailableException exception) {
-      return HealthCheckResponse.down("PQS RegisteredCredential projection");
+      return HealthCheckResponse.down("PQS credential projections");
     }
   }
 }

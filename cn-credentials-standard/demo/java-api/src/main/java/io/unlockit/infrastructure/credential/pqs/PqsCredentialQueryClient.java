@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agroal.api.AgroalDataSource;
 import io.unlockit.domain.credential.exception.PqsUnavailableException;
 import io.unlockit.domain.credential.model.Credential;
+import io.unlockit.domain.credential.model.CredentialRegistryFactory;
 import io.unlockit.domain.credential.model.RegisteredCredential;
 import io.unlockit.domain.credential.model.Registration;
 import io.unlockit.domain.credential.query.CredentialQueryClient;
@@ -24,6 +25,8 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
       "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential";
   static final String REGISTERED_CREDENTIAL_INTERFACE =
       "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential";
+  static final String CREDENTIAL_REGISTRY_FACTORY_INTERFACE =
+      "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:CredentialRegistryFactory";
   static final String FIND_CREDENTIAL_BY_ID_SQL = """
       select c.contract_id, c.payload as credential_payload
         from active(?) c
@@ -50,8 +53,20 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
        order by c.payload ->> 'id', c.contract_id
        limit ? offset ?
       """;
-  static final String READINESS_SQL =
-      "select 1 from active(?) c join active(?) r using (contract_id) limit 1";
+  static final String FIND_CREDENTIAL_REGISTRY_IDS_SQL = """
+      select f.payload ->> 'registryAdmin' as registry_id
+        from active(?) f
+       group by f.payload ->> 'registryAdmin'
+       order by registry_id
+       limit ? offset ?
+      """;
+  static final String FIND_CREDENTIAL_REGISTRY_FACTORIES_SQL = """
+      select f.contract_id, f.payload as factory_payload
+        from active(?) f
+       where f.payload ->> 'registryAdmin' = ?
+       order by f.payload ->> 'issuer', f.contract_id
+      """;
+  static final String READINESS_SQL = "select 1 from active(?) limit 0";
 
   private final AgroalDataSource dataSource;
   private final ObjectMapper objectMapper;
@@ -107,14 +122,60 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
   }
 
   @Override
-  public void checkCredentialProjections() {
+  public List<String> findCredentialRegistryIds(long offset, int limit) {
     try (Connection connection = dataSource.getConnection();
-        PreparedStatement statement = connection.prepareStatement(READINESS_SQL)) {
-      statement.setString(1, CREDENTIAL_INTERFACE);
-      statement.setString(2, REGISTERED_CREDENTIAL_INTERFACE);
-      statement.executeQuery();
+        PreparedStatement statement = connection.prepareStatement(FIND_CREDENTIAL_REGISTRY_IDS_SQL)) {
+      statement.setString(1, CREDENTIAL_REGISTRY_FACTORY_INTERFACE);
+      statement.setInt(2, limit);
+      statement.setLong(3, offset);
+      List<String> registryIds = new ArrayList<>();
+      try (ResultSet rows = statement.executeQuery()) {
+        while (rows.next()) {
+          registryIds.add(rows.getString("registry_id"));
+        }
+      }
+      return registryIds;
     } catch (SQLException exception) {
       throw new PqsUnavailableException(exception);
+    }
+  }
+
+  @Override
+  public List<CredentialRegistryFactory> findCredentialRegistryFactories(String registryId) {
+    try (Connection connection = dataSource.getConnection();
+        PreparedStatement statement =
+            connection.prepareStatement(FIND_CREDENTIAL_REGISTRY_FACTORIES_SQL)) {
+      statement.setString(1, CREDENTIAL_REGISTRY_FACTORY_INTERFACE);
+      statement.setString(2, registryId);
+      List<CredentialRegistryFactory> factories = new ArrayList<>();
+      try (ResultSet rows = statement.executeQuery()) {
+        while (rows.next()) {
+          factories.add(
+              mapCredentialRegistryFactory(
+                  rows.getString("contract_id"), rows.getString("factory_payload")));
+        }
+      }
+      return factories;
+    } catch (SQLException exception) {
+      throw new PqsUnavailableException(exception);
+    }
+  }
+
+  @Override
+  public void checkCredentialProjections() {
+    try (Connection connection = dataSource.getConnection()) {
+      checkProjection(connection, CREDENTIAL_INTERFACE);
+      checkProjection(connection, REGISTERED_CREDENTIAL_INTERFACE);
+      checkProjection(connection, CREDENTIAL_REGISTRY_FACTORY_INTERFACE);
+    } catch (SQLException exception) {
+      throw new PqsUnavailableException(exception);
+    }
+  }
+
+  private void checkProjection(Connection connection, String projection) throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement(READINESS_SQL)) {
+      statement.setString(1, projection);
+      statement.executeQuery();
     }
   }
 
@@ -185,6 +246,18 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
               registration.path("meta")));
     } catch (JsonProcessingException exception) {
       throw new SQLException("PQS returned an unsupported RegisteredCredential payload", exception);
+    }
+  }
+
+  CredentialRegistryFactory mapCredentialRegistryFactory(String contractId, String factoryPayload)
+      throws SQLException {
+    try {
+      JsonNode factory = objectMapper.readTree(factoryPayload);
+      return new CredentialRegistryFactory(
+          contractId, text(factory.path("registryAdmin")), text(factory.path("issuer")));
+    } catch (JsonProcessingException exception) {
+      throw new SQLException(
+          "PQS returned an unsupported CredentialRegistryFactory payload", exception);
     }
   }
 

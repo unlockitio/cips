@@ -20,12 +20,13 @@ Container ports are stable service-local ports. Published host ports can be over
 
 | Endpoint | Internal | Default host | Variable |
 | --- | ---: | ---: | --- |
-| Ledger API | `6865` | `6865` | `LEDGER_PORT` |
-| Canton HTTP API and `/livez` | `7575` | `7575` | `CANTON_HTTP_PORT` |
-| PQS health | `8080` | `8081` | `PQS_HEALTH_PORT` |
-| Credentials API | `8080` | `8080` | `CREDENTIALS_API_PORT` |
+| PostgreSQL | `5432` | `15432` | `POSTGRES_PORT` |
+| Ledger API | `6865` | `41000` | `LEDGER_PORT` |
+| Canton HTTP API and `/livez` | `7575` | `41001` | `CANTON_HTTP_PORT` |
+| PQS health | `8080` | `41002` | `PQS_HEALTH_PORT` |
+| Credentials API | `8080` | `41003` | `CREDENTIALS_API_PORT` |
 
-PostgreSQL is not published. The project name is `cn-credential-demo`; Compose creates project-scoped `credential-network`, `credential-artifacts`, and `credential-postgres-data` resources. The DID stack uses different host defaults and project resources, so both can run concurrently.
+PostgreSQL remains available to containers at `credential-postgres:5432`. From desktop pgAdmin or another host SQL client, connect to `localhost:15432` by default, or use the host port set by `POSTGRES_PORT`. Compose gives each demo a separate Docker network, so both can reuse the standard internal ports and service DNS names without conflict. Host mappings are machine-wide, however, and must be distinct to run the Credentials and DID demos concurrently. The project name is `cn-credential-demo`; Compose creates project-scoped `credential-network`, `credential-artifacts`, and `credential-postgres-data` resources.
 
 ## Lifecycle
 
@@ -60,7 +61,8 @@ Other useful targets are `make daml-build`, `make daml-test`, `make java-test`, 
 - `GET /v1/credentials?page=0&pageSize=50`
 - `GET /v1/registered-credentials/{credentialId}`
 - `GET /v1/registered-credentials?page=0&pageSize=50`
-- `GET /v1/registry-info`
+- `GET /v1/credential-registries?page=0&pageSize=50`
+- `GET /v1/credential-registries/{registryId}`
 - `GET /q/health/live`
 - `GET /q/health/ready`
 

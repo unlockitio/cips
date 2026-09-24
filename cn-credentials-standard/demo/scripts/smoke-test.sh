@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BASE="http://localhost:${CREDENTIALS_API_PORT:-8080}"
+BASE="http://localhost:${CREDENTIALS_API_PORT:-41003}"
 status() { curl --silent --output /dev/null --write-out '%{http_code}' "$1"; }
 
 until curl --fail --silent "$BASE/q/health/ready" >/dev/null; do
@@ -11,6 +11,31 @@ done
 
 curl --fail --silent "$BASE/q/health/live" | jq -e '.status == "UP"' >/dev/null
 curl --fail --silent "$BASE/q/health/ready" | jq -e '.status == "UP"' >/dev/null
+
+registries=$(curl --fail --silent "$BASE/v1/credential-registries?page=0&pageSize=50")
+printf '%s' "$registries" | jq -e '
+  .page == 0 and .pageSize == 50 and
+  (.hasNext | type == "boolean") and
+  (.items | length > 0) and
+  ([.items[].registryId] == ([.items[].registryId] | sort)) and
+  (all(.items[];
+    ((.registryId | type) == "string" and
+     (.apiVersion | type) == "string" and
+     (.credentials | type) == "object" and
+     (.registeredCredentials | type) == "object" and
+     (.issuanceFactories | type) == "array")))
+' >/dev/null
+registry_id=$(printf '%s' "$registries" | jq -r '.items[0].registryId')
+registry=$(curl --fail --silent "$BASE/v1/credential-registries/$registry_id")
+printf '%s' "$registry" | jq -e --arg registry_id "$registry_id" '
+  .registryId == $registry_id and
+  ([.issuanceFactories[] | [.issuer, .contractId]] ==
+   ([.issuanceFactories[] | [.issuer, .contractId]] | sort))
+' >/dev/null
+[ "$(status "$BASE/v1/credential-registries?page=-1&pageSize=50")" = 400 ]
+[ "$(status "$BASE/v1/credential-registries?page=0&pageSize=101")" = 400 ]
+[ "$(status "$BASE/v1/credential-registries/missing")" = 404 ]
+[ "$(status "$BASE/v1/registry-info")" = 404 ]
 
 intrinsic=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:credential:000")
 printf '%s' "$intrinsic" | jq -e '
