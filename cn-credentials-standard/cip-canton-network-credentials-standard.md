@@ -14,16 +14,14 @@
 
 ## Abstract
 
-Define a portable base credential contract standard, a credential registry interface and API standard built on that base, and a DSO-governed shared-registry deployment profile for storing, retrieving, discovering, and using registered credentials on the Canton Network.
+Define a portable base credential contract standard and a credential registry interface and API standard built on that base, and explore a DSO-governed shared-registry deployment profile for storing, retrieving, and using registered credentials, including DID-based registry identity and endpoint discovery.
 
 ## Specification
 
-This CIP consists of two generic layers, presented in dependency order:
+This CIP defines one core credential standard with two distinct surfaces:
 
-1. **Credential Contract and Registry Standards** defines two distinct surfaces:
-   * the **Base Credential Contract Standard**, for intrinsic credentials that can exist and be used without a registry; and
-   * the **Credential Registry Interface and API Standard**, a registry capability built on the base interface, with registry-specific metadata and lifecycle operations plus access-policy-neutral read-only HTTP APIs for exposed credential records. A conforming registry keeps its backend and APIs within the same responsibility boundary so consumers do not depend on its storage implementation.
-2. **Application and Metadata Discovery** standardizes discoverable declarations for applications and services, including credential registries. Through namespaced properties on credential subjects, these declarations describe what is available, where its endpoints are, which capabilities or metadata it supports, and how clients interact with it. Layer 2 defines how a client that knows an identity, party, or application context can find compatible services and the information needed to invoke them. This CIP uses the Credential Registry Interface and API Standard as the current mechanism for publishing and resolving the declarations, while registries themselves can be discoverable services. The off-ledger Asset Registry API discovery requirements in CIP-56 inform this layer's reusable discovery mechanism.
+* the **Base Credential Contract Standard**, for intrinsic credentials that can exist and be used without a registry; and
+* the **Credential Registry Interface and API Standard**, a registry capability built on the base interface, with registry-specific metadata and lifecycle operations plus access-policy-neutral read-only HTTP APIs for exposed credential records. A conforming registry keeps its backend and APIs within the same responsibility boundary so consumers do not depend on its storage implementation.
 
 The standard supports three deployment modes:
 
@@ -39,7 +37,7 @@ The System Context view treats the Canton Network Credentials Standard as one sy
 
 *System Context for the Canton Network Credentials Standard and its external actors. [C4-PlantUML source](images/credentials-system-context.puml).*
 
-The System Context is a simplification that separates direct issuance from registry-facing issuance for clarity; these labels describe roles, not required deployment boundaries or Layer 1 access classifications. One issuance application or registry-facing deployment may implement either capability or both. Each deployment defines whether and how credential records are exposed, including filtering, authentication, authorization, and audience.
+The System Context is a simplification that separates direct issuance from registry-facing issuance for clarity; these labels describe roles, not required deployment boundaries or ledger access classifications. One issuance application or registry-facing deployment may implement either capability or both. Each deployment defines whether and how credential records are exposed, including filtering, authentication, authorization, and audience.
 
 The System Context elements below identify the people and external systems shown in the diagram.
 
@@ -48,22 +46,22 @@ The System Context elements below identify the people and external systems shown
 | Credential Issuer | Person | Organization or individual acting in the issuer role. |
 | Credential Holder | Person | Party acting in the holder role. |
 | App User | Person | User of credential applications, wallets, and network explorers; using an explorer does not imply ledger Party authority. |
-| Canton Network Credentials Standard | System | The single in-scope system for portable credentials, registration, discovery, and the DSO deployment profile. |
+| Canton Network Credentials Standard | System | The single in-scope system for portable credentials, registration, registry HTTP access, lifecycle rules, and the DSO deployment profile. |
 | Direct Credential Issuance Application | External system | Issuer-specific software for issuance and holder workflows without required registry publication. |
 | Registry-facing Credential Issuance Application | External system | Issuer-specific software that adds registration or HTTP exposure; the promoted DSO deployment profile is a concrete instance. |
 | App / Wallet Provider | External system | Application or wallet that handles credentials for issuers, holders, and app users. |
-| Network Explorer | External system | Explorer that consumes credential records, lifecycle information, and discovery metadata exposed to it under deployment policy. |
+| Network Explorer | External system | Explorer that consumes credential records and lifecycle information exposed to it under deployment policy. |
 | DSO Party / SV Governance | Person | The DSO Party, collectively controlled by all SVs, acting as administrator and operator of the DSO Credential Registry. |
 
 #### Credential Registry Reference Application (DSO-managed)
 
-This CIP also promotes a DSO-managed Credential Registry reference application that applies both generic layers through one logical Credential Registry. The diagram separates public and private issuance capabilities for clarity. A single application may provide either capability or both. An issuance application uses the reference application but remains a distinct application component. The later DSO Credential Registry Deployment Profile defines its concrete deployment as one logical Credential Registry, administered and operated by a single DSO Party under the collective control of all SVs. The profile adds DSO-specific governance, registration expiry, fees, discovery, and endpoint publication. Implementations may expose the registry through multiple endpoints while preserving the same registry identity and governance model.
+This CIP also describes a DSO-managed Credential Registry reference application that demonstrates the core standard through one logical Credential Registry. Credential issuance remains an issuer-application responsibility and may be direct or registry-facing. The reference application demonstrates registration, registry access, and the DSO deployment profile; it does not define a generic application or metadata-discovery layer. The later DSO Credential Registry Deployment Profile defines its concrete deployment as one logical Credential Registry, administered and operated by a single DSO Party under the collective control of all SVs. The profile adds DSO-specific governance, registration expiry, fee considerations, and an exploratory composition with the Canton Network DID standard for registry identity and endpoint discovery. Implementations may expose the registry through multiple endpoints while preserving the same registry identity and governance model.
 
 This is the initial DSO deployment profile. Future iterations may define additional deployment models, including delegated operation or partitioning.
 
-### Layer 1: Credential Contract and Registry Standards
+### Credential Contract and Registry Standard
 
-Layer 1 defines Daml interfaces for the base `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`, and HTTP interfaces for credential registry discovery, lookup, and bulk retrieval. Credential Lifecycle relates intrinsic validity, registration lifecycle, and archival or removal behavior. A base credential can exist without registration.
+The core standard defines Daml interfaces for the base `Credential`, `RegisteredCredential`, and `CredentialRegistryFactory`, and HTTP interfaces for credential registry listing, lookup, and bulk retrieval. Credential Lifecycle relates intrinsic validity, registration lifecycle, and archival or removal behavior. A base credential can exist without registration.
 
 #### Daml Interfaces
 
@@ -335,7 +333,7 @@ When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfA
 
 The HTTP interfaces define two distinct read-resource families for records that an implementation makes available through a conforming endpoint. `GET /v1/credentials` and `GET /v1/credentials/{credentialId}` expose intrinsic `Credential` projections and MUST NOT require the underlying contract to implement `RegisteredCredential`. `GET /v1/registered-credentials` and `GET /v1/registered-credentials/{credentialId}` expose only contracts that implement both `Credential` and `RegisteredCredential`, associated by identical contract ID. A registered HTTP record MUST contain separate `credential` and `registration` objects. These HTTP projections do not merge the Daml interface views or change the requirement that `RegisteredCredential requires Credential`.
 
-Layer 1 does not classify records as public, restricted, or private and does not decide who may call an endpoint or receive a record. Deployments and implementors define endpoint exposure, filtering, authentication, authorization, and audience, independently of Daml stakeholder visibility. Conformance to these interfaces neither requires unauthenticated access nor grants access to any credential. The same operation and response schemas apply regardless of the deployment's access policy.
+The core standard does not classify records as public, restricted, or private and does not decide who may call an endpoint or receive a record. Deployments and implementors define endpoint exposure, filtering, authentication, authorization, and audience, independently of Daml stakeholder visibility. Conformance to these interfaces neither requires unauthenticated access nor grants access to any credential. The same operation and response schemas apply regardless of the deployment's access policy.
 
 The normative HTTP contract is the local [Credentials API v1 OpenAPI source](demo/interface/openapi/credential-registry-v1.yaml), with `/v1` as its canonical base path. It defines logical credential-registry discovery, family-specific capabilities, exact logical-ID lookup, bounded bulk retrieval, filters, lifecycle scope, separate event-history operations, pagination, ordering, responses, and errors. Compatible aliases such as `/api/v1` are non-normative and, when retained, MUST be documented as deprecated mappings with identical semantics.
 
@@ -416,177 +414,23 @@ The generic model keeps intrinsic validity and registry retention separate. The 
 
 Holder relinquishment and all-holder archival remain distinct `Credential` operations. Relinquishment removes only the exercising holder and replaces the contract while preserving validity and registration. All-holder archival terminates the canonical credential without replacement. A removed holder loses future stakeholder visibility according to concrete stakeholder behavior, but previously observed ledger data cannot be erased.
 
-<a id="application-and-metadata-discovery"></a>
-### Layer 2: Standardized Application and Metadata Discovery
 
-Layer 2 standardizes the current candidate mechanism for discovering applications and services, including credential registries: namespaced properties directly on a `CredentialSubject`, published and resolved through the Credential Registry Interface and APIs. A property value MAY carry endpoint, capability, or invocation information when its namespaced property definition assigns that meaning; multi-valued declarations use `AV_List`. Following the concrete Asset Registry API discovery need and form informed by CIP-56, a declaration associates a known subject, registry administrator, or application context with that service information. A client that knows that context can query the Credential Registry mechanism to resolve compatible service locations and the information needed to use them. App providers decide which discovered services and credentials influence their UIs and on-ledger workflows. CIP-56 remains the informing reference for Asset Registry API discovery; it is not a DID mechanism or a bootstrap authority for the Credential Registry, and this CIP does not change it.
-
-This model is conceptually similar to [W3C DID resolution](https://www.w3.org/TR/did-resolution/) and DID Document [`service` entries](https://www.w3.org/TR/did-core/#services): DID resolution resolves a known DID to a DID Document, whose `service` entries can advertise service metadata and endpoints. DID Core does not by itself establish endpoint trust, availability, API correctness, or BFT read semantics.
-
-DID-based service discovery is outside this CIP and is neither a dependency nor a conformance requirement. A future Canton Network DID standard or CIP could define it as an alternative or evolution by mapping this layer's service types and declarations to DID Document `service` entries and specifying precedence, coexistence, and migration. Until such a CIP is defined, namespaced subject properties resolved through the Credential Registry remain this CIP's normative current candidate mechanism.
-
-A concrete deployment must define how a client obtains an initial discovery context or entry point. This bootstrap concern is deployment-specific: Layer 2 does not provide zero-config discovery or define a universal bootstrap authority, and it does not require that the client already know the registry it ultimately discovers or uses. The DSO profile defines one concrete discovery mechanism below. Direct issuance can operate without this mechanism under the workflow conditions described above, while clients can use discovery separately for related applications and services.
-
-This CIP defines the following namespaced service-declaration keys:
-
-- `cip-TBD/credential-registry-urls`: declares the availability and locations of the off-ledger API for a specific registry administrator party `admin`. The administrator publishes its party, API version, supported capabilities, and a list of URLs. Multiple URLs MAY identify access endpoints for the same logical registry; endpoint consistency and read guarantees are deployment-specific unless an applicable profile defines them.
-
-- `cip-TBD/credential-issuer-app-url`: declares the availability and location of the dApp for a specific credential issuer party `issuer`. It is self-published by `issuer` according to the registry's publication rules and may be accompanied by namespaced properties describing supported interactions, capabilities, or invocation parameters. A wallet can read a user's credentials from the user's node, use the deployment's discovery entry point and Credential Registry mechanism to resolve this property, and offer a redirect to the issuer-specific dApp. The redirect may specify a `credential-contract-id=<contract-id>` query parameter. Providing this UI remains optional for credential issuers.
-
-In general, subject property names use the form `namespace/property`, where the namespace is either:
-
-1. `cip-<nr>` for properties defined in a CIP; or
-2. `<dns-name>` for properties defined by an organization that controls that DNS name.
-
-Layer 2 generalizes this discovery need so individual CIPs can define namespaced declarations for their own service families. Its subject-property mechanism is informed by CIP-56's concrete need and form for off-ledger Asset Registry API discovery, while this CIP defines publication and resolution through Credential Registry APIs.
-
-#### Service and Application Discovery
-
-The application and service discovery problem on the Canton Network arises when a client knows an application, provider, party, or contract context but does not yet know which compatible service is available, where its endpoint is, which capabilities or metadata it supports, or how to invoke it. Layer 2 standardizes namespaced declarations for this information, including declarations for credential registry services.
-
-A typical example is a wallet that knows the registry `admin` party-id on a `Holding` contract owned by its user but does not yet know the compatible off-ledger registry service, its available URLs, or how to use its API. The wallet resolves this information to read token metadata such as total supply and to obtain the data required to transfer the `Holding`.
-
-As described in [Application and Metadata Discovery](#application-and-metadata-discovery), publishing these declarations as well-known namespaced subject properties lets a client resolve the service and its interaction metadata through this CIP's Credential Registry mechanism. The deployment supplies an initial discovery context or entry point; the [DSO Registry Discovery](#dso-registry-discovery) profile defines discovery for its one logical registry.
-
-##### Application Discovery
-
-The list of all featured applications can be retrieved by querying for the
-corresponding credential issued by the `dso` party with property
-`cip-TBD/is-featured-app`.
-Fetching the public credentials held by their application provider party then allows discovering further meta information about the application.
-
-#### Profile Publication
-
-The problem of profile publication is how to enable the useful functionality of party owners self-publishing well-known metadata (e.g., website, LinkedIn profile, dApp URL) about themselves. This is common functionality in many systems and helps connect the system’s users.
-
-This information is typically unverified, which is fine as long as that information is not used to resolve names, but only to present additional details on a party (e.g., shown on hover).
-
-Such self-published profile information can be published in a credential registry using credentials where the issuer is a member of `holders` and with an appropriate namespaced subject property. For example, the owner of a party `p` could publish their website using a subject object of the form
-
-```text
-credentialSubject = [
-  CredentialSubject {
-    id = Some (W3C_VC_Identifier_Party p),
-    claims = TextMap.fromList [
-      ("profile.example/website", Api.Token.MetadataV1.AV_Text "<url>")
-    ]
-  }
-]
-```
-
-Here the map entry is a W3C-style property-value relation about the identified credential subject. External serialization maps the native Party subject to an application-profile URI or DID; it does not serialize the Daml `Party` value directly. The profile may independently include `p` in `holders`, but the Party subject does not make `p` a holder or lifecycle controller automatically.
-
-To ensure that different applications interpret profile information the same way, a future CIP should standardize the common properties used in profiles (e.g., by building on the corresponding ENS standard [ENSIP-18](https://docs.ens.domains/ensip/18/)).
-
-Applications may also need to discover registries storing a user’s profile information. A deployment profile can provide an entry point for this purpose; the DSO profile provides discovery for its one logical registry, while generic Layer 2 does not require that profile or a preexisting DSO registry.
-
-#### Party Name Resolution
-
-Party-ids are globally unique identifiers used in the Canton Network. However, they are difficult to use for humans as they are neither memorable nor easily comparable. Below we sketch how to build a name resolution system on top of the Credential Registry Interface and API Standard. We do so in two steps:
-
-1. We explain how to resolve names managed by a single issuer within a single credential registry.
-2. We explain how to resolve names across multiple issuers and credential registries.
-
-##### Single Issuer and Single Credential Registry Name Resolution
-
-Functionally this is what CNS 1.0 provides, where the `dso` party is both the issuer and credential registry administrator. A CNS record for user `p` with name `n` corresponds to a credential with:
-
-```text
-credentialSubject = [
-  CredentialSubject {
-    id = Some (W3C_VC_Identifier "<validated-cns-name-identifier>"),
-    claims = TextMap.fromList [
-      ("cip-TBD/cns-owner", Api.Token.MetadataV1.AV_Party <p>)
-    ]
-  }
-]
-```
-
-The credential is issued by the `dso` party. The CNS profile validates the external CNS identifier and independently authorizes `p` as a member of `holders`; the `Api.Token.MetadataV1.AV_Party` property value alone does not grant that role. We can read this credential as “The `dso` party claims that the CNS name \<n\> is owned by \<p\>”. The CNS name is the identified subject, while holder authorization is separate Canton operational metadata. An external VC profile must map that `Party` value to an identifier/URI/DID. With multiple subject objects, `credentialSubjectId=<n>` matches a credential when at least one subject has an external serialization of that identifier; `keyPrefix` is evaluated against property names of matching subjects.
-
-Resolving a CNS name `n` to the party holding it can be done using:
-
-```text
-GET /v1/credentials?issuer=<dso>&credentialSubjectId=<n>&keyPrefix=cip-TBD/cns-owner
-```
-
-The response will contain the credential listing the owner of the CNS name if it exists. The guarantee that there is at most one such credential is provided by the `dso` party as the issuer, which shows why it is paramount to constrain the query with `issuer=<dso>`.
-
-The reverse lookup to query all names of a party `p` can be done using:
-
-```text
-GET /v1/credentials?holder=<p>&issuer=<dso>&keyPrefix=cip-TBD/cns-owner
-```
-
-The singular `holder=<p>` query parameter filters by membership: the response will list one credential per CNS name for which `p` is a member of `CredentialView.holders`.
-
-The DSO/reference registry-exposed template implements `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`. CNS issuance remains an issuer workflow and uses the same standardized factory lifecycle when the resulting credential is registered.
-
-##### Multi-Issuer and Multi-Registry Name Resolution
-
-The basic idea is to follow the DNS construction and use hierarchical names and recursive resolution. Resolution is always done against a specific pair of an `issuer` and a registry `admin`. The root of the resolution is CNS with issuer `dso` and registry administrator `dso`.
-
-Managing the issuers associated with root entries (i.e., top-level domain registrars) requires defining suitable off-ledger governance. The association itself can be stored on-ledger as a credential issued by the `dso` party. We expect that such governance can be built by adopting existing policies like the ones from ICANN for the Canton Foundation.
-
-To support deduplicating names across multiple organizations issuing them concurrently, we expect that a more specific name registry interface will need to be developed. It can be implemented without contract keys by having the name registry administrator maintain the key-value map on-ledger in a scalable fashion (e.g., as a radix tree).
-
-The main challenge we see with multi-issuer, multi-registry name resolution is actually not in the name issuance and resolution aspect, but the design problem of how to cleanly allow apps to leverage the existing names that entities have in off-ledger systems like DNS, email, ENS or LEI.
-
-#### Verified Identities
-
-There are many systems that associate names with entities. In particular, DNS names and email addresses are well-known and widely used to identify counter-parties. In contrast to CNS 1.0, these systems have their authoritative data source off-ledger. Thus we cannot expect that statements about party-to-name associations in these systems can be resolved directly on-ledger.
-
-However, we do want to support imports of statements in the form "I \<issuer> have verified that party \<p> controls name \<n> in system \<S>". We can represent this using credentials issued by `issuer`, with `p` independently included in `holders` only when the profile authorizes that operational role, and with:
-
-```text
-credentialSubject = [
-  CredentialSubject {
-    id = Some (W3C_VC_Identifier "<validated-name-identifier>"),
-    claims = TextMap.fromList [
-      ("identity.example/<S>-controller", Api.Token.MetadataV1.AV_Party <p>)
-    ]
-  }
-]
-```
-
-This models the verified external name as the subject and the controlling Canton party as a typed property value. The applicable profile validates the External identifier and independently decides whether that Party is a holder; neither holder membership nor Canton choice authority follows from the identifier or property value. An External DID does not itself control Canton choices. An external VC profile must define how both the subject identifier and `Party` value map to interoperable identifiers such as URIs or DIDs.
-
-Once represented that in this way these can be used for name resolution in the same way as explained for CNS 1.0 above.
-
-Issuers have full control over the verification they do before issuing such a credential. For example, doing DNS verification using a [DNS challenge](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge). Information about the verification can be represented using defined VC properties, credential types and contexts supplied by a profile, extension-profile fields, or namespaced subject properties as appropriate. There is no generic claim-metadata container, and care should be taken to avoid bloating the credential.
-
-App providers can choose which issuers to query for names in what systems to resolve party names in their applications. They can combine multiple naming sources by issuing multiple name resolution queries.
-
-##### Consistent Cross-App Identities
-
-For identities to work consistently across multiple applications it is important that these apps use compatible name resolution strategies, including compatible lists of issuers and registries. We envision that this can be built for Canton Network in a future CIP that standardizes two aspects:
-
-1. How names from different systems are represented in a single namespace as ASCII strings.
-2. How to build suitable Canton Foundation governance such that most apps can use the same issuer and registry configuration.
-
-#### KYC Verification Services
-
-KYC verification imports issuer statements about the physical world using processes that vary between organizations. The issuer is responsible for defining and applying the assessment policy under which it issues a KYC credential. A verification status may be restricted to authorized consumers. Identity details, evidence, and supporting documents are private and outside the public DSO registry.
-
-> **Review note:** A future KYC profile must define the exact boundary between a shareable verification status and private evidence before it standardizes KYC publication.
-
-These statements are relative to the issuer's process. Publication does not establish regulatory quality or legal validity. App providers can consume external KYC services without network-wide standardization. Custom properties should use the DNS name of their defining organization as a prefix; for example, `acme.com/custom-property`.
-
-Organizations can use experience with restricted registries to inform a future CIP without making private data handling part of this iteration.
 
 ### DSO Credential Registry Deployment Profile
 
-The current DSO profile has one logical DSO Credential Registry. One DSO Party, collectively controlled by all SVs, is both the registry administrator and operator. Separating the administrator and operator concepts does not create separate parties or delegated operators in this profile: both roles are assigned to that same DSO Party. Registry administration does not make the DSO Party an issuer, holder, or other stakeholder of every credential.
+This section explores a concrete composition of the Credentials standard with the current Canton Network DID draft. The two core standards remain independent: generic credential conformance does not require a DID, and DID conformance does not require a credential registry. The DSO reference application demonstrates the composition but does not make its unresolved choices normative for either core standard.
 
-The current profile does not partition registry state or workload by issuer namespace, assign operation to Validators, delegate operation to other parties, or use Scan as a registry router or proxy. How individual SV infrastructure instances divide physical operational work is outside this specification. Internal distribution, replication, or multiple access endpoints, if implemented, MUST present one logical registry and MUST NOT imply separate registries, public partitions, or namespace-based routing.
+The explored profile has one logical DSO Credential Registry. One DSO Party, collectively controlled by all SVs, is both registry administrator and operator. Separating those concepts does not create separate parties or delegated operators. Registry administration does not make the DSO Party an issuer, holder, DID controller, or other stakeholder of every credential.
+
+The profile does not partition registry state or workload by issuer namespace, assign operation to Validators, delegate operation to other parties, or use Scan as a registry router or proxy. Internal distribution, replication, or multiple access endpoints, if implemented, must present one logical registry and must not imply separate registries, public partitions, or namespace-based routing.
 
 #### Deployment Architecture, Administration, and Operation
 
-![Container view showing one logical DSO Credential Registry, with the DSO Party collectively controlled by all SVs serving as both administrator and operator, and clients and explorers using its registry and discovery APIs directly.](images/credentials-containers.png)
+![Container view showing one logical DSO Credential Registry, with the DSO Party collectively controlled by all SVs serving as both administrator and operator, and clients resolving its identity and endpoint through a trusted DID resolver before using the registry API.](images/credentials-containers.png)
 
-*Container view of the DSO Public Credential Issuance Application instance and its one logical DSO Credential Registry. Physical hosting topology is intentionally unspecified. [C4-PlantUML source](images/credentials-containers.puml).*
+*Container view of the DSO registry reference application and its exploratory DID-based deployment profile. Physical hosting topology is intentionally unspecified. [C4-PlantUML source](images/credentials-containers.puml).*
 
-The DSO profile applies the generic registry and discovery surfaces defined by Layers 1 and 2. The DSO credential registry item advertises the DSO Registry's constraints, API version, required read capabilities, supported lifecycle scopes and filters, pagination limits, and endpoint information. A profile-specific registration capability is additionally required if registration is restricted to internal workflows. Clients and explorers use the published endpoint information without depending on the registry's physical storage or hosting topology. The following subsections define the DSO profile's concrete expiry, access, discovery, and operating model.
+The registry item returned by `GET /v1/credential-registries/{registryId}` advertises the registry's constraints, API version, required read capabilities, supported lifecycle scopes and filters, and pagination limits. The Credentials OpenAPI remains the application protocol after discovery. A profile-specific registration capability is additionally required if registration is restricted to internal workflows.
 
 #### Concrete Expiry and Renewal Policy
 
@@ -594,20 +438,22 @@ The DSO profile keeps intrinsic validity and registry retention conceptually dis
 
 A DSO `RegisteredCredentialLifecycle_Renew` MUST be jointly authorized by the issuer and DSO registry administrator. It consumes the old canonical contract and creates exactly one replacement atomically, setting both values to the same strictly later time and preserving every other credential and registration field.
 
-Payment is optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. The current iteration defines no transfer protocol or price. The TSv1 roadmap must resolve payer and receiver authorization, pricing, payment-renewal atomicity, replay and idempotency, failure and refunds, finality, concurrency control, privacy, metadata validation, and auditability before adoption.
-
+Payment is optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. The current iteration defines no transfer protocol or price. Any future payment profile must resolve payer and receiver authorization, pricing, payment-renewal atomicity, replay and idempotency, failure and refunds, finality, concurrency control, privacy, metadata validation, and auditability before adoption.
 
 #### Deployment Components and Access
 
-The APIs are implemented as follows:
+The explored composition has these components:
 
-1. The `splice-amulet-name-service` package provides two templates for this profile.
-   1. The `AnsCredentialFactory` template implements the candidate `CredentialRegistryFactory` interface.
-   2. The proposed `AnsCredentialRecord` template exposes `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle` on one canonical credential contract.
-2. The registry backend and standard APIs operate for the DSO Party, which is both administrator and operator of the one logical registry.
-3. DSO-governed discovery records announce the DSO Party, API version, supported read capabilities and lifecycle scopes, and registry API URLs.
+1. The `splice-amulet-name-service` package provides the proposed registry-facing templates.
+   1. `AnsCredentialFactory` implements the candidate `CredentialRegistryFactory` interface.
+   2. `AnsCredentialRecord` exposes `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle` on one canonical credential contract.
+2. The registry backend and the HTTP API defined by [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) operate for the DSO Party.
+3. A DID Document whose `id` is the selected DSO registry DID contains a stable, profile-defined `service` entry. The entry uses a registered or otherwise governed service `type`, carries explicitly versioned endpoint data, and identifies one or more base URLs for the Credentials OpenAPI. The service entry locates the API; it does not by itself prove that the DID controller is authorized to operate the DSO Credential Registry.
+4. A trusted resolver configuration resolves and verifies that DID Document before a client selects an endpoint.
 
-Clients query the DSO Credential Registry APIs directly. Explorers can retrieve active records and, when advertised, inactive records or event history through the corresponding standard operations, subject to the deployment's endpoint exposure, filtering, authentication, authorization, and audience policy. The profile does not assign registry operation to Validators, require a Scan proxy, or require a custom explorer or registry ingestion pipeline. If multiple access endpoints are published, they provide access to the same logical registry; their physical hosting, availability design, access policy, and consistency guarantees are outside this iteration.
+DID resolution locates and identifies the service. It does not replace the Credentials HTTP protocol or establish caller authentication, operation authorization, governance approval, endpoint trustworthiness, or service availability. Those controls remain separate deployment responsibilities. In particular, control of a DID or DID Document does not by itself authorize an entity to operate the DSO Credential Registry; DSO governance must grant that authority independently.
+
+Clients call the discovered Credentials API directly. Explorers can retrieve active records and, when advertised, inactive records or event history through the corresponding standard operations, subject to endpoint exposure, filtering, authentication, authorization, and audience policy. If multiple endpoints are advertised, they provide access to the same logical registry. Their hosting, availability, consistency, and selection rules remain unresolved.
 
 Scalability is measured for the logical registry. Representative load tests should measure PQS projection growth, API throughput and latency, storage, and operating cost before more complex mechanisms are considered.
 
@@ -616,26 +462,36 @@ Scalability is measured for the logical registry. Representative load tests shou
 Registration expiry creates recurring retention activity without claiming a revenue or burn forecast. A future DSO profile revision may define fees and an associated economic model, but this iteration specifies neither a payment protocol nor concrete fee assumptions. Any future model must identify its network, period, eligible population, governance parameters, and adoption assumptions.
 
 <a id="dso-registry-discovery"></a>
-#### DSO Registry Discovery
+#### DSO Registry Identity and DID Service Discovery
 
-This section defines discovery for the DSO profile's one logical registry; it does not make a preexisting registry a requirement of generic Layer 2. The DSO Party publishes the generic `cip-TBD/credential-registry-urls` declaration with its party, API version, supported capabilities, and one or more access URLs. All published URLs identify the same logical DSO Credential Registry. This iteration does not define a namespace-specific route property, partition assignment, or routing history.
+The current Canton Network DID draft provides candidate DID Document and service-entry structures, including a stable service identifier, a service type, and explicitly versioned endpoint data. It does not yet settle the `did:canton` method, Party binding, authoritative resolver, bootstrap path, service-type registry, or endpoint profile. This section therefore remains profile exploration rather than a complete normative deployment profile.
 
-The DSO Party can also publish profile-specific properties such as `cip-TBD/is-featured-app` for an application provider subject:
+The intended flow is:
 
-```text
-credentialSubject = [
-  CredentialSubject {
-    id = Some (W3C_VC_Identifier "<validated-application-provider-identifier>"),
-    claims = TextMap.fromList [
-      ("cip-TBD/is-featured-app", Api.Token.MetadataV1.AV_Bool True)
-    ]
-  }
-]
-```
+1. Start from trusted resolver and network configuration supplied independently of the credential registry.
+2. Resolve the DSO registry DID and verify the returned DID Document under the selected DID method and resolver rules.
+3. Select the credential-registry service entry by its profile-defined service type and version.
+4. Use its `serviceEndpoint` URI as the base URL for the Credentials OpenAPI under `/v1`.
+5. Verify the profile-defined binding between the resolved DID, the DSO Party, and the canonical `registryId`. Then confirm the logical registry identity and advertised capabilities through `GET /v1/credential-registries/{registryId}` before using record operations. The exact binding proof and authority remain unresolved in this draft.
 
-Each example uses one External subject, but the same credential may contain additional subject objects. The application provider may independently be included in `holders`. Clients MUST NOT infer holder membership, Party identity, or lifecycle control from the subject identifier or claims.
+This flow must not bootstrap circularly. The initial trusted resolver, network identifier, trust anchors, and any method-specific authority information must not depend on already knowing the credential registry endpoint being discovered.
 
-Clients obtain the DSO Registry discovery declaration from the deployment's published entry point and call one of the advertised Registry API URLs. The exact bootstrap channel is outside this iteration. Publishing multiple URLs does not imply separate registries, partitioned state, or namespace-based route selection.
+The following matters are unresolved and must be specified before this profile can claim complete conformance:
+
+* binding the DSO Party and logical `registryId` to the selected DID;
+* selecting and governing the DID method, authoritative resolver, trust anchors, and bootstrap inputs;
+* registering the credential-registry service type and defining its versioned endpoint schema;
+* authenticating the endpoint and binding transport credentials to the resolved identity;
+* proving DSO governance authorization separately from DID control;
+* defining freshness and version checks for DID Documents and service entries;
+* selecting among multiple endpoints and defining failover, consistency, and conflict behavior; and
+* handling unavailable, stale, deactivated, unverifiable, or conflicting resolution results;
+* selecting the DID Document representation, canonicalization rules, verification-method representation, and cryptographic suite;
+* defining controller and lifecycle authorization, authoritative state, historical resolution, finality, and deactivation semantics; and
+* defining service-entry identifiers and precedence when multiple service entries or endpoint values are present.
+
+These choices overlap unresolved matters in the current Canton Network DID draft. Until they are resolved, implementations may demonstrate this composition but must not claim that core Credentials conformance requires DID-based discovery or that DID resolution alone establishes a conforming DSO registry deployment.
+
 
 
 <a id="dso-credential-registry-limits"></a>
@@ -647,7 +503,7 @@ TODO: inline the explanations from the source code
 
 ## Motivation
 
-Canton Network applications increasingly need to publish and discover credential information for service discovery, party profiles, name resolution, and identity or KYC integrations. The off-ledger Asset Registry API discovery requirements in CIP-56 provide a related precedent for reusable service discovery, with CIP-56 retaining its own Asset Registry endpoint semantics. Common credential read APIs allow applications to discover credential-related information consistently while deployments retain control of endpoint exposure and caller access.
+Canton Network applications increasingly need interoperable access to credential records and registry capabilities. The off-ledger Asset Registry API discovery requirements in CIP-56 provide related precedent for service discovery while retaining their own Asset Registry endpoint semantics. This CIP standardizes credential and registry read APIs and separately explores DID-based discovery of the DSO registry endpoint.
 
 This CIP defines a portable base credential, registry interfaces, access-policy-neutral HTTP read APIs for exposed credential records, and a DSO shared-registry deployment profile. In this increment, one DSO Party, collectively controlled by all SVs, administers and operates one logical DSO Credential Registry while credential issuance, interpretation, and access policy remain with issuers, consuming applications, and the deployment as applicable. Registry administration does not make the DSO Party the universal issuer, holder, custodian, or other stakeholder of all credentials.
 
@@ -656,12 +512,12 @@ This CIP defines a portable base credential, registry interfaces, access-policy-
 <a id="use-case-analysis"></a>
 ### Use-Case and Design Requirements
 
-The base credential, registry capability and APIs, and DSO profile are building blocks for the exposure-policy examples below. The following sketches remain informative: they demonstrate deployment choices but do not define Layer 1 classifications or standardize issuer verification, legal reliance, or application-specific authorization. Future CIPs may standardize common subject properties and resolution mechanisms.
+The base credential, registry capability and APIs, and exploratory DSO profile are building blocks for the exposure-policy examples below. The following sketches remain informative: they demonstrate deployment choices but do not define ledger access classifications or standardize issuer verification, legal reliance, or application-specific authorization.
 
 #### Exposure Use Cases and Boundaries (Informative)
 
 Example deployment choices include:
-* A deployment can expose token metadata, service discovery, profiles, name resolution, or deliberately published bond term-sheet metadata without caller authentication. Bond publication should normally contain a content hash, version, effective date, status, and URI. It does not imply that investor allocations or private terms are stored on-ledger.
+* A deployment can expose token metadata, credential records, or deliberately published bond term-sheet metadata without caller authentication. Bond publication should normally contain a content hash, version, effective date, status, and URI. It does not imply that investor allocations or private terms are stored on-ledger. The DSO profile's DID service discovery concerns registry identity and API endpoint location, not general-purpose name resolution.
 * A deployment can require authenticated and authorized access to KYC verification status.
 * A deployment can decline to expose KYC evidence, personal details, and supporting documents through these APIs.
 
@@ -672,13 +528,13 @@ The design separates record and history retrieval from the policy and legal deci
 
 #### Decisions, Alternatives, and Deferred Questions
 
-Generic interfaces contain cross-profile credential and registry semantics. Product-specific interface instances, such as a `FeaturedAppRight` credential instance, belong in their owning profile or CIP; this scope principle does not remove the generic interfaces defined here.
+Generic interfaces contain cross-profile credential and registry semantics. Product-specific credential instances belong in their owning profile or CIP; this scope principle does not remove the generic interfaces defined here.
 
-The current design uses `NonEmpty CredentialSubject`, with each subject carrying `id : Optional W3C_VC_Identifier` and `claims : TextMap Api.Token.MetadataV1.AnyValue`; `CredentialView.issuer` uses the same identifier representation non-optionally with distinct issuer semantics. The identifier ADT distinguishes Canton-native `Party` identifiers from profile-permitted and validated external identifiers, which are not automatically DIDs. A present subject ID serializes as `credentialSubject.id`; an absent ID omits that property while the subject may still carry claims. Each claim entry flattens to a direct property on the external W3C subject object; no `claims` wrapper is serialized. Multi-valued claims use `AV_List`, and `id` remains a separate field and a reserved claim key. The wrapper and triple alternatives are closed for this draft. `AnyValue` provides Canton-native typed values, including recursive lists and maps, but the exact mapping of arbitrary nested values into JSON-LD remains unresolved. Layer 2 likewise selects namespaced subject properties resolved through Credential Registry APIs for the current candidate; DID-based discovery remains a future path. External serialization and context rules, the exact Party-to-URI-or-DID mapping, treatment of the Canton holder extension, status/schema/evidence extension profiles, and liability for cross-organization KYC reliance remain unresolved.
+The current design uses `NonEmpty CredentialSubject`, with each subject carrying `id : Optional W3C_VC_Identifier` and `claims : TextMap Api.Token.MetadataV1.AnyValue`; `CredentialView.issuer` uses the same identifier representation non-optionally with distinct issuer semantics. The identifier ADT distinguishes Canton-native `Party` identifiers from profile-permitted and validated external identifiers, which are not automatically DIDs. A present subject ID serializes as `credentialSubject.id`; an absent ID omits that property while the subject may still carry claims. Each claim entry flattens to a direct property on the external W3C subject object; no `claims` wrapper is serialized. Multi-valued claims use `AV_List`, and `id` remains a separate field and a reserved claim key. The wrapper and triple alternatives are closed for this draft. `AnyValue` provides Canton-native typed values, including recursive lists and maps, but the exact mapping of arbitrary nested values into JSON-LD remains unresolved. This draft does not define a generic application or profile-discovery layer. The DSO profile explores DID-based discovery only for locating the DSO registry identity and Credentials API endpoint; it does not define generic namespaced subject-property resolution. External serialization and context rules, the exact Party-to-URI-or-DID mapping, treatment of the Canton holder extension, status/schema/evidence extension profiles, and liability for cross-organization KYC reliance remain unresolved.
 
 ## Scope and Non-Goals
 
-This CIP defines the Base Credential Contract Standard, the Credential Registry Interface and API Standard, Application and Metadata Discovery, and a DSO Credential Registry Deployment Profile. The first increment includes a registry-independent credential surface, a registry capability and backend, access-policy-neutral HTTP read interfaces for exposed credential records, namespaced discovery declarations, and one logical DSO Credential Registry administered and operated by the DSO Party collectively controlled by all SVs. The standard requires active record retrieval and capability declarations for inactive records and event history; it does not require a particular deployment to expose an endpoint to every caller. The DSO profile does not currently define partitions, namespace assignments, delegated operation, or Scan-based routing. Multiple access endpoints, if provided, identify the same logical registry and do not prescribe its physical hosting topology.
+This CIP defines the Base Credential Contract Standard, the Credential Registry Interface and API Standard, and an exploratory DSO Credential Registry Deployment Profile. The first increment includes a registry-independent credential surface, a registry capability and backend, access-policy-neutral HTTP read interfaces for exposed credential records, and one logical DSO Credential Registry administered and operated by the DSO Party collectively controlled by all SVs. The DSO profile explores composition with DID Document service entries only for locating the DSO registry identity and Credentials API endpoint; it does not define a generic application, profile, or namespaced subject-property discovery layer. The standard requires active record retrieval and capability declarations for inactive records and event history; it does not require a particular deployment to expose an endpoint to every caller. The DSO profile does not currently define partitions, namespace assignments, delegated operation, or Scan-based routing. Multiple access endpoints, if provided, identify the same logical registry and do not prescribe its physical hosting topology.
 
 The `credentialSubject` collection and subject-local typed properties are semantically aligned with the W3C model, but the draft does not claim complete conformance. A conforming external representation additionally requires the mandated `@context`, a `type` including `VerifiableCredential`, URL identifiers, and a securing mechanism. External object-versus-array encoding, mappings for Canton-native `Party` and `ContractId` values, JSON-LD interpretation of `AV_List` and `AV_Map`, context processing, and extension profiles for concerns such as credential status, schema, and evidence remain outside or open.
 
@@ -686,14 +542,14 @@ The `credentialSubject` collection and subject-local typed properties are semant
 
 This roadmap is non-normative. Candidate future iterations are not current behavior and require separate design, review, and approval.
 
-* **Current iteration:** provides the generic credential and registry capabilities, discovery declarations, registration access and retrieval APIs, registration expiry, and fee behavior defined above. The DSO profile has one logical registry, with one DSO Party collectively controlled by all SVs serving as both administrator and operator.
+* **Current iteration:** provides the generic credential and registry capabilities, registration access and retrieval APIs, registration expiry, and the exploratory DSO profile described above. The DSO profile has one logical registry, with one DSO Party collectively controlled by all SVs serving as both administrator and operator. Fees remain deferred and non-normative.
 * **Candidate future scaling and partitioning:** may evaluate registry partitions, namespace assignment, migration, routing history, and replication or consistency models. Any such model requires a future specification and must define its correctness and operational boundaries.
 * **Candidate future delegated operation:** may evaluate Validator-operated infrastructure, delegation and authorization, incentives, accountability, and operational requirements. Evaluation does not imply adoption; delegated operation requires a future specification.
 * **Candidate future access and routing evolution:** may evaluate Scan integration, proxies, route selection, multiple endpoints, high availability, and BFT reads. These are possible designs rather than current requirements and require a future specification.
 * **Candidate future lifecycle extensions:** may define general reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, standalone retention updates, status-list integration, detailed lineage or version state, history contracts, reason vocabularies, or mandatory lifecycle-on-registration. None is current normative behavior. Future work must preserve the distinction between intrinsic validity, registry retention, renewal, and holder operations.
 * **Candidate future holder and registry extensions:** may define separate holder-association contracts, registry-removal semantics, or private encrypted holder storage without bypassing the standardized holder choices.
 * **Candidate future payment profile:** may use a TSv1 transfer compatibility pattern as optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. A future specification MUST resolve target and payer authorization, receiver, asset and pricing, atomicity with renewal, replay and idempotency, failure and refund behavior, finality, concurrency control, privacy, metadata validation, auditability, and exact Daml and API integration. No payment protocol or receiver/memo convention is adopted here.
-* **Other deferred work:** includes a full W3C VC profile or Canton DID method, DID-based service discovery, and complete issuance, presentation, and selective-disclosure protocols.
+* **Other deferred work:** includes a full W3C VC profile or Canton DID method, completion of the DSO DID composition, and complete issuance, presentation, and selective-disclosure protocols.
 
 ## Reference Implementation
 
@@ -703,7 +559,7 @@ The non-normative [`demo/`](demo/) is a local PQS-backed reference implementatio
 
 The in-process Daml seed/test verifies the 360-credential fixture. A partial live PQS run verified 36 `Credential` and 36 `RegisteredCredential` projections. A fresh full 300+ live validation was blocked by intermittent Canton synchronizer readiness with `PACKAGE_SERVICE_CANNOT_AUTODETECT_SYNCHRONIZER`; the complete 360-record PQS/API path is not claimed as fully live-validated.
 
-The demo uses a deliberately simple authority model, public synthetic data, no production authentication, one sandbox participant, and offset pagination without snapshot consistency. It is evidence for the shape of the candidate flow, not a production registry, security profile, endorsement, or resolution of open governance questions. See the [demo README](demo/README.md) for pinned versions, verified limitations, and troubleshooting.
+The demo uses a deliberately simple authority model, public synthetic data, no production authentication, one sandbox participant, and offset pagination without snapshot consistency. It demonstrates registry behavior and OpenAPI access only; it does not implement DID resolution, DID Document publication, or service-entry verification. It is evidence for the shape of the candidate flow, not a production registry, security profile, endorsement, or resolution of open governance questions. See the [demo README](demo/README.md) for pinned versions, verified limitations, and troubleshooting.
 
 ## References
 
@@ -729,7 +585,7 @@ Sep 17, 2026: introduced the shared `W3C_VC_Identifier` representation for issue
 
 Sep 16, 2026: split the intrinsic base Credential from the separate RegisteredCredential registry capability, reframed factory and HTTP APIs around registration, documented deployment modes and breaking draft compatibility, and updated the DSO shared-registry profile
 
-Sep 15, 2026: reorganized the draft into two generic specification layers and a concrete DSO deployment profile, separated generic and DSO-specific policy, and preserved unresolved issues for follow-up
+Sep 15, 2026: historical revision reorganized the draft into two generic specification layers and a concrete DSO deployment profile; the current draft no longer uses that architecture
 
 Jan 9, 2026: wrote first draft
 
