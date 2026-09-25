@@ -1,0 +1,80 @@
+module Canton.Network.Did.Demo where
+
+import Canton.Network.Did.V1
+import DA.NonEmpty (NonEmpty(..))
+import DA.TextMap qualified as TextMap
+import Splice.Api.Token.MetadataV1 qualified as Metadata
+
+-- This stakeholder model is deliberately local to the non-normative demo.
+-- The document owner signs; registryAdmin is only the demo Party association and observer.
+template DemoDidDocument
+  with
+    owner : Party
+    document : DidDocumentView
+    registration : DidRegistrationMetadata
+  where
+    signatory owner
+    observer registration.registryAdmin
+
+    interface instance DidDocument for DemoDidDocument where
+      view = document
+
+    interface instance RegisteredDidDocument for DemoDidDocument where
+      view = RegisteredDidDocumentView with ..
+
+      registeredDidDocument_publicFetchImpl _ _ =
+        pure RegisteredDidDocumentView with ..
+
+demoDocument : Party -> Text -> Text -> Time -> DemoDidDocument
+demoDocument owner didText label now = DemoDidDocument with
+  owner
+  document = documentView didText label
+  registration = registrationView owner now
+
+documentView : Text -> Text -> DidDocumentView
+documentView didText _label =
+  let did = Did didText
+  in DidDocumentView with
+    id = did
+    controllers = NonEmpty did []
+    verificationMethods = []
+    verificationRelationships = VerificationRelationships with
+      authentication = []
+      assertionMethod = []
+      capabilityInvocation = []
+    services =
+      [ demoService didText "did-registries" "CantonDidRegistryService" "did-registries"
+      , demoService didText "dids" "CantonDidResolutionService" "dids"
+      , demoService didText "credential-registries" "CantonCredentialRegistryService" "credential-registries"
+      , demoService didText "credentials" "CantonCredentialService" "credentials"
+      , demoService didText "asset-registries" "CantonAssetRegistryService" "asset-registries"
+      , demoService didText "assets" "CantonAssetService" "assets"
+      ]
+
+demoService : Text -> Text -> Text -> Text -> DidService
+demoService didText fragment serviceType path = DidService with
+  id = ServiceId (didText <> "#" <> fragment)
+  serviceType = ServiceType serviceType
+  serviceEndpoint = VersionedServiceEndpoint with
+    version = "1.0"
+    endpoints = NonEmpty
+      (endpoint 42003 path 0)
+      [endpoint 42004 path 1, endpoint 42005 path 2, endpoint 42006 path 3]
+
+endpoint : Int -> Text -> Int -> ServiceEndpoint
+endpoint port path priority = ServiceEndpoint with
+  uri = ServiceEndpointUri ("http://localhost:" <> show port <> "/v1/" <> path)
+  priority = Some priority
+
+registrationView : Party -> Time -> DidRegistrationMetadata
+registrationView registryAdmin now = DidRegistrationMetadata with
+  registryAdmin
+  registeredAt = Some now
+  updatedAt = Some now
+  versionId = "demo-version-1"
+  deactivated = False
+  deactivatedAt = None
+  source = "canton-ledger-pqs-demo"
+  integrityEvidence = Some "demo-unverified-integrity-evidence"
+  finalityEvidence = Some "demo-no-authoritative-finality"
+  meta = Metadata.Metadata with values = TextMap.empty

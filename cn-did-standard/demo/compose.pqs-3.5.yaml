@@ -1,0 +1,3 @@
+services:
+  did-pqs:
+    image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.5.8

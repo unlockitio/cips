@@ -1,0 +1,79 @@
+module Canton.Network.Did.Tests where
+
+import Canton.Network.Did.Seed (runSeed, SeedParties(..))
+import Canton.Network.Did.Demo
+import Canton.Network.Did.V1
+import Daml.Script
+import DA.List (head)
+import DA.NonEmpty (NonEmpty(..))
+
+main : Script ()
+main = script do
+  alice <- allocateParty "DidTestAlice"
+  bob <- allocateParty "DidTestBob"
+  now <- getTime
+  aliceCid <- submit alice do
+    createCmd DemoDidDocument with
+      owner = alice
+      document = documentView "did:example:test-alice" "alice"
+      registration = registrationView alice now
+  bobCid <- submit bob do
+    createCmd DemoDidDocument with
+      owner = bob
+      document = documentView "did:example:test-bob" "bob"
+      registration = registrationView bob now
+
+  let aliceRegisteredCid = toInterfaceContractId @RegisteredDidDocument aliceCid
+  aliceDocument <- queryContractId alice aliceCid
+  assertMsg "concrete contract carries the DidDocument interface view"
+    (fmap (.document) aliceDocument == Some (documentView "did:example:test-alice" "alice"))
+  dso <- allocatePartyByHint (PartyIdHint "DSO")
+  let dsoDid = Did ("did:canton:" <> partyToText dso)
+  let document = documentView dsoDid.value "dso"
+  assertMsg "DSO retains its full runtime DID and controller"
+    (document.id == dsoDid && document.controllers.hd == dsoDid && document.controllers.tl == [])
+  assertMsg "demo verification methods and relationships are explicit empty lists"
+    (document.verificationMethods == []
+      && document.verificationRelationships.authentication == []
+      && document.verificationRelationships.assertionMethod == []
+      && document.verificationRelationships.capabilityInvocation == [])
+  let services = document.services
+  assertMsg "demo document advertises exactly six service families" (length services == 6)
+  assertMsg "every service preserves four ordered endpoints"
+    (all (\service ->
+      let endpoints = service.serviceEndpoint.endpoints
+      in length (endpoints.hd :: endpoints.tl) == 4
+        && map (.priority) (endpoints.hd :: endpoints.tl) == [Some 0, Some 1, Some 2, Some 3]) services)
+  fresh <- runSeed (SeedParties dso)
+  rerun <- runSeed (SeedParties dso)
+  assertMsg "fresh seed creates one contract and rerun preserves it" (length fresh == 1 && fresh == rerun)
+  seeded <- queryContractId dso (head fresh)
+  assertMsg "fresh seed carries the four-endpoint document" (fmap (.document) seeded == Some document)
+  legacy <- allocateParty "LegacyDSO"
+  let legacyDid = "did:canton:" <> partyToText legacy
+  let current = documentView legacyDid "dso"
+  let oldServices = map (\service -> service with serviceEndpoint = (service.serviceEndpoint with endpoints = NonEmpty service.serviceEndpoint.endpoints.hd (take 2 service.serviceEndpoint.endpoints.tl))) current.services
+  let oldDocument = current with services = oldServices
+  oldCid <- submit legacy do createCmd ((demoDocument legacy legacyDid "dso" now) with document = oldDocument)
+  preserved <- runSeed (SeedParties legacy)
+  oldContract <- queryContractId legacy oldCid
+  assertMsg "rerun never silently migrates an existing three-endpoint document"
+    (preserved == [oldCid] && fmap (.document) oldContract == Some oldDocument)
+  assertMsg "concrete contract carries the RegisteredDidDocument interface view"
+    (fmap (\contract -> RegisteredDidDocumentView contract.document contract.registration) aliceDocument
+      == Some (RegisteredDidDocumentView (documentView "did:example:test-alice" "alice") (registrationView alice now)))
+
+  fetched <- submit alice do
+    exerciseCmd aliceRegisteredCid RegisteredDidDocument_PublicFetch with
+      expectedRegistryAdmin = alice
+      actor = alice
+  assertMsg "public fetch returns the registered view" (fetched.document.id == Did "did:example:test-alice")
+
+  submitMustFail alice do
+    exerciseCmd aliceRegisteredCid RegisteredDidDocument_PublicFetch with
+      expectedRegistryAdmin = bob
+      actor = alice
+
+  bobDocument <- queryContractId bob bobCid
+  assertMsg "Alice and Bob have distinct demo Party associations"
+    (fmap (\contract -> contract.registration.registryAdmin) bobDocument == Some bob && alice /= bob)

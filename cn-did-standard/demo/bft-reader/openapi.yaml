@@ -1,0 +1,111 @@
+openapi: 3.0.3
+info:
+  title: Demo-local BFT Reader API
+  version: 1.0.0-demo
+  description: |
+    Non-normative singular DID quorum reader. Bootstrap uses the singular /v1/dids/dso response.
+    Collections are direct single-PQS reads, never quorum reads.
+    It fans out to four trusted API replicas and requires three matching canonical JSON results.
+    The replicas share one PQS/PostgreSQL pipeline, so this demonstrates API-replica quorum and
+    deterministic fault handling, not independent Byzantine fault domains.
+servers:
+  - url: /v1/bft
+security: []
+paths:
+  /dids/{did}:
+    get:
+      operationId: resolveDidWithQuorum
+      description: Appends one canonical encoded DID segment to each trusted discovered `/v1/dids` root.
+      parameters:
+        - name: did
+          in: path
+          required: true
+          description: Canonically percent-encoded did:canton Party DID, decoded exactly once.
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+        '504': { $ref: '#/components/responses/Timeout' }
+components:
+  schemas:
+    Quorum:
+      type: object
+      required: [required, matched, total, agreement]
+      properties:
+        required: { type: integer, enum: [3] }
+        matched: { type: integer, minimum: 3, maximum: 4 }
+        total: { type: integer, enum: [4] }
+        agreement: { type: string, enum: [3-of-4, 4-of-4] }
+    SourceDiagnostic:
+      type: object
+      required: [advertisedUri, priority, status, outcome, durationMillis]
+      properties:
+        advertisedUri: { type: string, format: uri }
+        priority: { type: integer, minimum: 0, maximum: 3 }
+        status: { type: integer }
+        outcome: { type: string, enum: [valid, not_found, timeout, unavailable, upstream_error, non_comparable, invalid_json] }
+        digest: { type: string, nullable: true }
+        durationMillis: { type: integer, format: int64, minimum: 0 }
+    Authority:
+      type: object
+      required: [dsoDid, bootstrapUrl, advertisedEndpoints]
+      properties:
+        dsoDid: { type: string }
+        bootstrapUrl: { type: string, format: uri }
+        advertisedEndpoints:
+          type: array
+          minItems: 24
+          maxItems: 24
+          items: { type: string, format: uri }
+    BftRead:
+      type: object
+      required: [family, result, digest, quorum, sources, authority]
+      properties:
+        family: { type: string }
+        result: {}
+        digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+        quorum: { $ref: '#/components/schemas/Quorum' }
+        sources:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { $ref: '#/components/schemas/SourceDiagnostic' }
+        authority: { $ref: '#/components/schemas/Authority' }
+    Error:
+      type: object
+      required: [status, error, message, sources]
+      properties:
+        status: { type: integer }
+        error: { type: string }
+        message: { type: string }
+        sources:
+          type: array
+          maxItems: 4
+          description: Ordered by configured endpoint priority and then advertised URI.
+          items: { $ref: '#/components/schemas/SourceDiagnostic' }
+  responses:
+    Success:
+      description: A deterministic three-of-four or four-of-four JSON quorum.
+      content: { application/json: { schema: { $ref: '#/components/schemas/BftRead' } } }
+    BadRequest:
+      description: Unsupported family or malformed DID.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: At least three valid sources agree the DID is not found.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Four valid responses have no digest quorum.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    BadGateway:
+      description: Bootstrap, discovery, or endpoint trust validation failed.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unavailable:
+      description: Fewer than three comparable sources agreed.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Timeout:
+      description: The whole read exceeded its operation deadline.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

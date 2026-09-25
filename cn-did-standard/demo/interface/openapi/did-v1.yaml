@@ -1,0 +1,402 @@
+openapi: 3.0.3
+info:
+  title: Canton Network DID Read API
+  version: 1.0.0-draft
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  description: |
+    Singular active resolution and direct single-PQS historical collections.
+    Registered projections join identical contracts and compatible creation/archive events.
+    Collections use active, creates and archives at one validated bigint snapshot offset.
+    Time filters use inclusive From (>=) and exclusive Until (<) effective-time bounds.
+    Intervals with From >= Until are invalid. Either archive filter excludes active rows.
+    Token query claims use normalized createdFrom, createdUntil, archivedFrom and archivedUntil.
+    No token selects a fresh snapshot;
+    token alone continues by DID/contract keyset; token plus page jumps by OFFSET inside
+    that snapshot. Repeated filters and pageSize must match the token or be omitted.
+    Tokens expire without renewal. No observation time or separate snapshot token is emitted.
+    BFT remains singular-only. Access control is a deployment concern.
+servers:
+  - url: /v1
+    description: Canonical API base path.
+security: []
+paths:
+  /did-registries:
+    get:
+      operationId: discoverDidRegistries
+      summary: Describe the DID registry discovery root
+      responses:
+        '200': { $ref: '#/components/responses/Discovery' }
+  /credential-registries:
+    get:
+      operationId: discoverCredentialRegistries
+      summary: Describe the credential registry discovery root
+      responses:
+        '200': { $ref: '#/components/responses/Discovery' }
+  /credentials:
+    get:
+      operationId: discoverCredentials
+      summary: Describe the credential discovery root
+      responses:
+        '200': { $ref: '#/components/responses/Discovery' }
+  /asset-registries:
+    get:
+      operationId: discoverAssetRegistries
+      summary: Describe the asset registry discovery root
+      responses:
+        '200': { $ref: '#/components/responses/Discovery' }
+  /assets:
+    get:
+      operationId: discoverAssets
+      summary: Describe the asset discovery root
+      responses:
+        '200': { $ref: '#/components/responses/Discovery' }
+  /dids:
+    get:
+      operationId: listDids
+      summary: List intrinsic DID Documents
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/State'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedUntil'
+        - $ref: '#/components/parameters/ArchivedFrom'
+        - $ref: '#/components/parameters/ArchivedUntil'
+        - $ref: '#/components/parameters/NextPageToken'
+      responses:
+        '200':
+          description: Deterministic page ordered by DID and contract ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DidPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /dids/capabilities:
+    get:
+      operationId: getDidCapabilities
+      summary: Single-PQS historical listing and singular-only BFT capabilities
+      responses:
+        '200':
+          description: Supported states, time filters, signed pagination and BFT boundary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [listings, bft]
+                properties:
+                  listings: { type: object, additionalProperties: true }
+                  bft: { type: object, additionalProperties: true }
+  /dids/dso:
+    get:
+      operationId: getLocalDso
+      summary: Singular local DSO bootstrap document
+      description: 'Selects the configured exact DID or the sole did:canton:DSO:: candidate. Other intrinsic DIDs are ignored. Zero or ambiguous candidates fail; never returns a collection envelope.'
+      responses:
+        '200':
+          description: Local DSO intrinsic DID record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DidRecord'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /dids/{did}:
+    get:
+      operationId: getDid
+      summary: Resolve an intrinsic DID Document
+      parameters:
+        - $ref: '#/components/parameters/DidPath'
+      responses:
+        '200':
+          description: Intrinsic DID record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DidRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /registered-dids:
+    get:
+      operationId: listRegisteredDids
+      summary: List registered DID records
+      description: Returns only identical-contract-ID compositions with separate intrinsic and registration objects.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/State'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedUntil'
+        - $ref: '#/components/parameters/ArchivedFrom'
+        - $ref: '#/components/parameters/ArchivedUntil'
+        - $ref: '#/components/parameters/NextPageToken'
+        - name: partyId
+          in: query
+          description: Exact registration administrator Party filter.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Deterministic page ordered by DID and contract ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisteredDidPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /registered-dids/{did}:
+    get:
+      operationId: getRegisteredDid
+      summary: Resolve a registered DID record
+      parameters:
+        - $ref: '#/components/parameters/DidPath'
+      responses:
+        '200':
+          description: Registered DID record with separate DID Document and registration metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisteredDidRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  parameters:
+    State:
+      name: state
+      in: query
+      schema: { type: string, enum: [active, archived, all] }
+      description: Defaults to active on fresh queries; inherited from token otherwise.
+    CreatedFrom:
+      name: createdFrom
+      in: query
+      description: Inclusive creation effective-time lower bound (>=). Must be earlier than createdUntil when both are supplied.
+      schema: { type: string, format: date-time }
+    CreatedUntil:
+      name: createdUntil
+      in: query
+      description: Exclusive creation effective-time upper bound (<).
+      schema: { type: string, format: date-time }
+    ArchivedFrom:
+      name: archivedFrom
+      in: query
+      description: Inclusive archive effective-time lower bound (>=). Excludes active rows. Must be earlier than archivedUntil when both are supplied.
+      schema: { type: string, format: date-time }
+    ArchivedUntil:
+      name: archivedUntil
+      in: query
+      description: Exclusive archive effective-time upper bound (<). Excludes active rows.
+      schema: { type: string, format: date-time }
+    NextPageToken:
+      name: nextPageToken
+      in: query
+      description: HMAC continuation bound to resource, filters, page size, snapshot and expiry.
+      schema: { type: string }
+    DidPath:
+      name: did
+      in: path
+      required: true
+      description: Canonical encoded single-segment base DID. UTF-8 bytes other than URI-unreserved bytes are uppercase percent encoded; decode exactly once.
+      schema:
+        type: string
+        minLength: 1
+    Page:
+      name: page
+      in: query
+      description: Zero-based page. Omit with token for keyset continuation; supply with token for a snapshot-relative OFFSET jump.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    PageSize:
+      name: pageSize
+      in: query
+      description: Positive page size; implementations fetch at most pageSize plus one row to derive hasNext.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+  schemas:
+    Discovery:
+      type: object
+      required: [family, apiVersion, instanceId, status]
+      additionalProperties: false
+      properties:
+        family: { type: string }
+        apiVersion: { type: string, enum: [v1] }
+        instanceId: { type: string, minLength: 1 }
+        status: { type: string, enum: [discovery-only] }
+    ServiceEndpoint:
+      type: object
+      required: [uri, priority]
+      additionalProperties: false
+      properties:
+        uri: { type: string, format: uri }
+        priority: { type: integer, format: int32, minimum: 0 }
+    VersionedServiceEndpoint:
+      type: object
+      required: [version, endpoints]
+      additionalProperties: false
+      properties:
+        version: { type: string, minLength: 1 }
+        endpoints:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ServiceEndpoint' }
+    Service:
+      type: object
+      required: [id, type, serviceEndpoint]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        type: { type: string, minLength: 1 }
+        serviceEndpoint: { $ref: '#/components/schemas/VersionedServiceEndpoint' }
+    DidDocument:
+      type: object
+      required: [id, controller, verificationMethod, verificationRelationships, service]
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        controller:
+          type: array
+          minItems: 1
+          items: { type: string }
+        verificationMethod:
+          type: array
+          items: { type: object, additionalProperties: true }
+        verificationRelationships:
+          type: object
+          additionalProperties: true
+        service:
+          type: array
+          items: { $ref: '#/components/schemas/Service' }
+    DidRecord:
+      type: object
+      required: [contractId, did, didDocument]
+      additionalProperties: false
+      properties:
+        contractId: { type: string, minLength: 1 }
+        did: { type: string, minLength: 1 }
+        didDocument: { $ref: '#/components/schemas/DidDocument' }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+    Registration:
+      type: object
+      required: [registryAdmin, registeredAt, updatedAt, versionId, deactivated, source, integrityEvidence, finalityEvidence, metadata]
+      additionalProperties: false
+      properties:
+        registryAdmin: { type: string }
+        registeredAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        versionId: { type: string }
+        deactivated: { type: boolean }
+        deactivatedAt: { type: string, format: date-time, nullable: true }
+        source: { type: string }
+        integrityEvidence: { type: string }
+        finalityEvidence: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    RegisteredDidRecord:
+      type: object
+      required: [contractId, did, didDocument, registration]
+      additionalProperties: false
+      properties:
+        contractId: { type: string, minLength: 1 }
+        did: { type: string, minLength: 1 }
+        didDocument: { $ref: '#/components/schemas/DidDocument' }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+        registration: { $ref: '#/components/schemas/Registration' }
+    DidPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/DidRecord' }
+    RegisteredDidPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/RegisteredDidRecord' }
+    Lifecycle:
+      type: object
+      description: Present on collection items only. Archive fields are null for contracts active at the snapshot. Archival is distinct from registration deactivation.
+      required: [state, templateFqn, payloadType, createEventPk, createEventId, createdAtIx, createdAtOffset, createdEffectiveAt, archiveEventPk, archiveEventId, archivedAtIx, archivedAtOffset, archivedEffectiveAt]
+      properties:
+        state: { type: string, enum: [active, archived] }
+        templateFqn: { type: string }
+        payloadType: { type: string }
+        createEventPk: { type: integer, format: int64 }
+        createEventId: { type: string }
+        createdAtIx: { type: integer, format: int64 }
+        createdAtOffset: { type: integer, format: int64 }
+        createdEffectiveAt: { type: string, format: date-time }
+        archiveEventPk: { type: integer, format: int64, nullable: true }
+        archiveEventId: { type: string, nullable: true }
+        archivedAtIx: { type: integer, format: int64, nullable: true }
+        archivedAtOffset: { type: integer, format: int64, nullable: true }
+        archivedEffectiveAt: { type: string, format: date-time, nullable: true }
+    Page:
+      type: object
+      required: [items, snapshotOffset, nextPageToken, page, pageSize, hasNext]
+      properties:
+        snapshotOffset: { type: integer, format: int64 }
+        nextPageToken: { type: string, nullable: true }
+        items: { type: array, items: {} }
+        page: { type: integer, format: int64, minimum: 0 }
+        pageSize: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        hasNext: { type: boolean }
+    Error:
+      type: object
+      required: [status, error, message]
+      properties:
+        status: { type: integer }
+        error: { type: string }
+        message: { type: string }
+  responses:
+    Discovery:
+      description: Demo-local discovery descriptor. This root does not implement the named domain API.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Discovery' }
+    BadRequest:
+      description: Invalid input, invalid_token (malformed or tampered), token_expired, token_wrong_resource, token_query_mismatch, or snapshot_unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No matching active record in the selected family.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Duplicate active logical DID in the selected family.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: PQS is unavailable or returned an unsupported projection.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

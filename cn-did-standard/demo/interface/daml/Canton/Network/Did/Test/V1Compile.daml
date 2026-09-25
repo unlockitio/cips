@@ -1,0 +1,21 @@
+module Canton.Network.Did.Test.V1Compile where
+
+import Canton.Network.Did.V1
+
+-- Compile fixtures check the public interface surface without inventing a concrete registry.
+didDocumentViewCompiles : DidDocumentView -> DidDocumentView
+didDocumentViewCompiles = identity
+
+registeredDocumentViewCompiles : RegisteredDidDocumentView -> DidDocumentView
+registeredDocumentViewCompiles = (.document)
+
+registeredDocumentRequiresBase : ContractId RegisteredDidDocument -> ContractId DidDocument
+registeredDocumentRequiresBase = toInterfaceContractId
+
+publicFetchChoiceCompiles : ContractId RegisteredDidDocument -> Party -> Party -> Update RegisteredDidDocumentView
+publicFetchChoiceCompiles contractId expectedRegistryAdmin actor =
+  exercise contractId RegisteredDidDocument_PublicFetch with ..
+
+factoryBatchUpdateCompiles : ContractId DidRegistryFactory -> Party -> [RegisteredDidDocumentMetadataUpdate] -> Update DidRegistryFactory_UpdateRegisteredDidDocumentsResult
+factoryBatchUpdateCompiles contractId actor updates =
+  exercise contractId DidRegistryFactory_UpdateRegisteredDidDocuments with ..

@@ -1,0 +1,42 @@
+@startuml did-containers
+!include <C4/C4_Container>
+
+LAYOUT_LEFT_RIGHT()
+title Canton Network DID Standard - Container View
+
+Person(subject, "DID Subject / Canton Party", "Is identified by a DID and may self-control or delegate control of its DID Document.")
+Person(controller, "DID Controller", "Requests authorized DID Document lifecycle transitions under the selected control model.")
+System_Ext(client, "Application / Wallet / Client", "Resolves registered DIDs and uses discovery profiles to select and invoke compatible services.")
+System_Ext(services, "Discoverable Application Services", "External Credential, Asset, Scan, onboarding, and other services discoverable through DID Document service entries.")
+
+System_Boundary(didStandard, "Canton Network DID Standard") {
+  System_Boundary(layer1, "Layer 1: DID Document, Control, and Resolution Standard") {
+    Container(damlInterfaces, "Daml DID Interfaces", "DidDocument, RegisteredDidDocument, DidRegistryFactory", "Separates intrinsic DID Document content from registry metadata and batch registry operations; lifecycle authority remains implementation-specific.")
+    Container(httpInterfaces, "DID Registry HTTP Interfaces", "Registry Info and DID Resolution APIs", "Describes registry scope and resolves current or historical DID state with document and resolution metadata.")
+    Container(state, "Authoritative DID State & Binding Evidence", "Candidate logical responsibility", "Supplies current and historical registered DID state and optional binding evidence; authority, visibility, storage, and placement remain open.")
+    Container(registrar, "DID Registrar Interface / Runtime", "Layer 1 interface", "Coordinates separately authorized lifecycle transitions under the selected control model.")
+    Container(resolver, "DID Resolver Interface / Runtime", "Layer 1 runtime", "Uses registry interfaces and authoritative state to return verifiable resolution results.")
+  }
+
+  System_Boundary(layer2, "Layer 2: Standardized Application and Metadata Discovery") {
+    Container(discovery, "Application & Metadata Discovery / Service Profiles", "Layer 2 consumer", "Consumes registered Layer 1 DID Documents and selects typed, versioned service endpoints.")
+  }
+
+}
+
+Rel(subject, damlInterfaces, "Is identified by a document represented through")
+Rel(controller, registrar, "Requests authorized lifecycle transitions")
+Rel(registrar, state, "Coordinates authorized state transitions")
+Rel(registrar, damlInterfaces, "Implements separately authorized document lifecycle")
+Rel(damlInterfaces, state, "Represents documents and registration metadata")
+Rel(httpInterfaces, state, "Exposes scoped registry info and resolution")
+Rel(resolver, httpInterfaces, "Implements or consumes")
+Rel(resolver, state, "Reads authoritative current or historical state")
+Rel(client, resolver, "Resolves DIDs through")
+Rel(resolver, client, "Returns document and verification metadata")
+Rel(discovery, damlInterfaces, "Consumes registered Layer 1 DID Documents")
+Rel(client, discovery, "Uses profiles to select services")
+Rel(discovery, services, "Describes service selection and invocation")
+
+SHOW_LEGEND()
+@enduml

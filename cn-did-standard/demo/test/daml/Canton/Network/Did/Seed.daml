@@ -1,0 +1,32 @@
+module Canton.Network.Did.Seed where
+
+import Canton.Network.Did.Demo
+import Canton.Network.Did.V1 (Did(..))
+import Daml.Script
+
+data SeedParties = SeedParties with
+  dso : Party
+
+main : Script [ContractId DemoDidDocument]
+main = script do
+  dso <- allocatePartyByHint (PartyIdHint "DSO")
+  runSeed SeedParties with dso
+
+resume : SeedParties -> Script [ContractId DemoDidDocument]
+resume = script . runSeed
+
+runSeed : SeedParties -> Script [ContractId DemoDidDocument]
+runSeed parties =
+  ensureDocument parties.dso ("did:canton:" <> partyToText parties.dso) "dso"
+
+ensureDocument : Party -> Text -> Text -> Script [ContractId DemoDidDocument]
+ensureDocument owner didText label = do
+  existing <- queryFilter owner (\document -> document.document.id == Did didText)
+  assertMsg ("Duplicate DID document: " <> didText) (length existing <= 1)
+  case existing of
+    [(cid, _)] -> pure [cid]
+    [] -> do
+      now <- getTime
+      cid <- submit owner do createCmd (demoDocument owner didText label now)
+      pure [cid]
+    _ -> abort ("Duplicate DID document: " <> didText)

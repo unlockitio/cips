@@ -1,0 +1,33 @@
+services:
+  did-api-1:
+    ports:
+      - "${DID_API_1_PORT:-42003}:8080"
+    environment:
+      DID_DEMO_FAULTS_ENABLED: "${DID_API_1_FAULTS_ENABLED:-false}"
+      DID_DEMO_FAULT_MODE: "${DID_API_1_FAULT_MODE:-normal}"
+      DID_DEMO_FAULT_FAMILY: "${DID_API_1_FAULT_FAMILY:-all}"
+      DID_DEMO_FAULT_DELAY: "${DID_API_1_FAULT_DELAY:-4s}"
+  did-api-2:
+    ports:
+      - "${DID_API_2_PORT:-42004}:8080"
+    environment:
+      DID_DEMO_FAULTS_ENABLED: "${DID_API_2_FAULTS_ENABLED:-false}"
+      DID_DEMO_FAULT_MODE: "${DID_API_2_FAULT_MODE:-normal}"
+      DID_DEMO_FAULT_FAMILY: "${DID_API_2_FAULT_FAMILY:-all}"
+      DID_DEMO_FAULT_DELAY: "${DID_API_2_FAULT_DELAY:-4s}"
+  did-api-3:
+    ports:
+      - "${DID_API_3_PORT:-42005}:8080"
+    environment:
+      DID_DEMO_FAULTS_ENABLED: "${DID_API_3_FAULTS_ENABLED:-false}"
+      DID_DEMO_FAULT_MODE: "${DID_API_3_FAULT_MODE:-normal}"
+      DID_DEMO_FAULT_FAMILY: "${DID_API_3_FAULT_FAMILY:-all}"
+      DID_DEMO_FAULT_DELAY: "${DID_API_3_FAULT_DELAY:-4s}"
+  did-api-4:
+    ports:
+      - "${DID_API_4_PORT:-42006}:8080"
+    environment:
+      DID_DEMO_FAULTS_ENABLED: "${DID_API_4_FAULTS_ENABLED:-false}"
+      DID_DEMO_FAULT_MODE: "${DID_API_4_FAULT_MODE:-normal}"
+      DID_DEMO_FAULT_FAMILY: "${DID_API_4_FAULT_FAMILY:-all}"
+      DID_DEMO_FAULT_DELAY: "${DID_API_4_FAULT_DELAY:-4s}"

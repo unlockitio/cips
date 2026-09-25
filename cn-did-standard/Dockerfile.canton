@@ -1,0 +1,23 @@
+FROM eclipse-temurin:21-jre
+
+ARG CANTON_VERSION=3.5.11
+ARG CANTON_SHA256=d0741b712ea428ef3e9dcd98549313e79027ba256bc901d579785ed323ffd9a6
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && curl --fail --location --silent --show-error \
+      "https://github.com/digital-asset/canton/releases/download/v${CANTON_VERSION}/canton-open-source-${CANTON_VERSION}.tar.gz" \
+      --output /tmp/canton.tar.gz \
+    && printf '%s  %s\n' "${CANTON_SHA256}" /tmp/canton.tar.gz | sha256sum --check --strict \
+    && mkdir -p /opt/canton \
+    && tar -xzf /tmp/canton.tar.gz -C /opt/canton --strip-components=1 \
+    && rm /tmp/canton.tar.gz \
+    && rm -rf /var/lib/apt/lists/* \
+    && /opt/canton/bin/canton --version
+
+COPY demo/canton/sandbox.conf /etc/canton/sandbox.conf
+COPY demo/canton/bootstrap.canton /etc/canton/bootstrap.canton
+
+EXPOSE 6865 7575
+ENTRYPOINT ["/opt/canton/bin/canton"]
+CMD ["daemon", "-c", "/etc/canton/sandbox.conf", "--bootstrap", "/etc/canton/bootstrap.canton"]

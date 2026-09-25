@@ -1,0 +1,125 @@
+module Canton.Network.Did.V1 where
+
+import DA.NonEmpty (NonEmpty)
+import Splice.Api.Token.MetadataV1 qualified as Api.Token.MetadataV1
+
+-- Candidate reference interfaces for the Canton Network DID Standard.
+
+newtype Did = Did with
+  value : Text
+ deriving (Eq, Ord, Show)
+
+newtype VerificationMethodId = VerificationMethodId with
+  value : Text
+ deriving (Eq, Ord, Show)
+
+newtype ServiceId = ServiceId with
+  value : Text
+ deriving (Eq, Ord, Show)
+
+newtype ServiceType = ServiceType with
+  value : Text
+ deriving (Eq, Ord, Show)
+
+newtype ServiceEndpointUri = ServiceEndpointUri with
+  value : Text
+ deriving (Eq, Ord, Show)
+
+data VerificationMethod = VerificationMethod with
+  id : VerificationMethodId
+  controllerDid : Did
+  methodType : Text
+  verificationMaterial : Text
+ deriving (Eq, Show)
+
+data VerificationRelationships = VerificationRelationships with
+  authentication : [VerificationMethodId]
+  assertionMethod : [VerificationMethodId]
+  capabilityInvocation : [VerificationMethodId]
+ deriving (Eq, Show)
+
+data ServiceEndpoint = ServiceEndpoint with
+  uri : ServiceEndpointUri
+  priority : Optional Int
+ deriving (Eq, Show)
+
+data VersionedServiceEndpoint = VersionedServiceEndpoint with
+  version : Text
+  endpoints : NonEmpty ServiceEndpoint
+ deriving (Eq, Show)
+
+data DidService = DidService with
+  id : ServiceId
+  serviceType : ServiceType
+  serviceEndpoint : VersionedServiceEndpoint
+ deriving (Eq, Show)
+
+data DidDocumentView = DidDocumentView with
+  id : Did
+  controllers : NonEmpty Did
+  verificationMethods : [VerificationMethod]
+  verificationRelationships : VerificationRelationships
+  services : [DidService]
+ deriving (Eq, Show)
+
+interface DidDocument where
+  viewtype DidDocumentView
+
+data DidRegistrationMetadata = DidRegistrationMetadata with
+  registryAdmin : Party
+  registeredAt : Optional Time
+  updatedAt : Optional Time
+  versionId : Text
+  deactivated : Bool
+  deactivatedAt : Optional Time
+  source : Text
+  integrityEvidence : Optional Text
+  finalityEvidence : Optional Text
+  meta : Api.Token.MetadataV1.Metadata
+ deriving (Eq, Show)
+
+data RegisteredDidDocumentView = RegisteredDidDocumentView with
+  document : DidDocumentView
+  registration : DidRegistrationMetadata
+ deriving (Eq, Show)
+
+interface RegisteredDidDocument requires DidDocument where
+  viewtype RegisteredDidDocumentView
+
+  registeredDidDocument_publicFetchImpl : ContractId RegisteredDidDocument -> RegisteredDidDocument_PublicFetch -> Update RegisteredDidDocumentView
+
+  nonconsuming choice RegisteredDidDocument_PublicFetch : RegisteredDidDocumentView
+    with
+      expectedRegistryAdmin : Party
+      actor : Party
+    controller actor
+    do
+      result <- registeredDidDocument_publicFetchImpl this self arg
+      assertMsg "unexpected registry administrator" (expectedRegistryAdmin == result.registration.registryAdmin)
+      pure result
+
+data DidRegistryFactoryView = DidRegistryFactoryView with
+  registryAdmin : Party
+ deriving (Eq, Show)
+
+data RegisteredDidDocumentMetadataUpdate = RegisteredDidDocumentMetadataUpdate with
+  registeredDidDocument : ContractId RegisteredDidDocument
+  registration : DidRegistrationMetadata
+ deriving (Eq, Show)
+
+data DidRegistryFactory_UpdateRegisteredDidDocumentsResult = DidRegistryFactory_UpdateRegisteredDidDocumentsResult with
+  registeredDidDocuments : [ContractId RegisteredDidDocument]
+ deriving (Eq, Show)
+
+interface DidRegistryFactory where
+  viewtype DidRegistryFactoryView
+
+  didRegistryFactory_updateRegisteredDidDocumentsImpl : ContractId DidRegistryFactory -> DidRegistryFactory_UpdateRegisteredDidDocuments -> Update DidRegistryFactory_UpdateRegisteredDidDocumentsResult
+
+  choice DidRegistryFactory_UpdateRegisteredDidDocuments : DidRegistryFactory_UpdateRegisteredDidDocumentsResult
+    with
+      actor : Party
+      updates : [RegisteredDidDocumentMetadataUpdate]
+    controller actor
+    do
+      didRegistryFactory_updateRegisteredDidDocumentsImpl this self arg

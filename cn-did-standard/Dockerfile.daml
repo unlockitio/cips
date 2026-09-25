@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1.19
+FROM eclipse-temurin:21-jdk AS dpm
+
+ARG TARGETARCH
+ARG DPM_VERSION=3.5.11
+ARG DPM_AMD64_SHA256=6834c0501414e034755cc01ef7296101c4501c883c4e5827e798235e6232e644
+ARG DPM_ARM64_SHA256=d950e54243d6eae00d2b6cb31392a6b5e5979e0cee7717a15dc75b7801e78153
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && case "${TARGETARCH}" in \
+         amd64) archive_arch=amd64; checksum="${DPM_AMD64_SHA256}" ;; \
+         arm64) archive_arch=arm64; checksum="${DPM_ARM64_SHA256}" ;; \
+         *) printf 'Unsupported architecture: %s\n' "${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && url="https://artifactregistry.googleapis.com/download/v1/projects/da-images/locations/europe/repositories/public-generic/files/dpm-sdk:${DPM_VERSION}:dpm-${DPM_VERSION}-linux-${archive_arch}.tar.gz:download?alt=media" \
+    && curl --fail --location --silent --show-error "$url" --output /tmp/dpm.tar.gz \
+    && printf '%s  %s\n' "$checksum" /tmp/dpm.tar.gz | sha256sum --check --strict \
+    && mkdir -p /root/.dpm \
+    && tar -xzf /tmp/dpm.tar.gz -C /root/.dpm --strip-components=1 \
+    && rm /tmp/dpm.tar.gz \
+    && /root/.dpm/bin/dpm install "${DPM_VERSION}" \
+    && /root/.dpm/bin/dpm version
+
+ENV PATH=/root/.dpm/bin:${PATH}
+ENV DPM_HOME=/root/.dpm
+
+FROM dpm AS build
+
+ARG SPLICE_METADATA_URL=https://raw.githubusercontent.com/hyperledger-labs/splice/fc5075093d9b10191aeedab66ff35cadaded9dc8/daml/dars/splice-api-token-metadata-v1-1.0.0.dar
+ARG SPLICE_METADATA_SHA256=455eb160cb5abd4ae9918a6fbb9dad471f721adda39f0e5c76feef08d05637fc
+
+WORKDIR /workspace
+COPY --exclude=.daml --exclude=.packages --exclude=.deps cn-did-standard/demo /workspace/did
+
+RUN mkdir -p /workspace/did/.deps /artifacts \
+    && curl --fail --location --silent --show-error "$SPLICE_METADATA_URL" --output /tmp/splice-metadata.dar \
+    && printf '%s  %s\n' "$SPLICE_METADATA_SHA256" /tmp/splice-metadata.dar | sha256sum --check --strict \
+    && cp /tmp/splice-metadata.dar /workspace/did/.deps/splice-api-token-metadata-v1-1.0.0.dar \
+    && cd /workspace/did \
+    && dpm build --all \
+    && cp /workspace/did/interface/.daml/dist/canton-network-did-interfaces-0.1.0.dar /artifacts/ \
+    && cp /workspace/did/model/.daml/dist/canton-network-did-demo-0.1.0.dar /artifacts/ \
+    && cp /workspace/did/test/.daml/dist/canton-network-did-demo-scripts-0.1.0.dar /artifacts/
+
+FROM busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23 AS artifacts
+COPY --from=build --chmod=0444 /artifacts/canton-network-did-interfaces-0.1.0.dar /artifacts/canton-network-did-interfaces-0.1.0.dar
+COPY --from=build --chmod=0444 /artifacts/canton-network-did-demo-0.1.0.dar /artifacts/canton-network-did-demo-0.1.0.dar
+COPY --from=build --chmod=0444 /artifacts/canton-network-did-demo-scripts-0.1.0.dar /artifacts/canton-network-did-demo-scripts-0.1.0.dar
+
+FROM dpm AS tools
+COPY --from=build /artifacts/canton-network-did-interfaces-0.1.0.dar /artifacts/canton-network-did-interfaces-0.1.0.dar
+COPY --from=build /artifacts/canton-network-did-demo-0.1.0.dar /artifacts/canton-network-did-demo-0.1.0.dar
+COPY --from=build /artifacts/canton-network-did-demo-scripts-0.1.0.dar /artifacts/canton-network-did-demo-scripts-0.1.0.dar

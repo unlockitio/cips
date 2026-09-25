@@ -2,24 +2,18 @@
 !include <C4/C4_Context>
 
 LAYOUT_LEFT_RIGHT()
-title Canton Network DID Standard - System Context (Informative)
+title Canton Network DID Standard - System Context
 
-Person(subject, "DID Subject / Canton Party", "Entity identified by the DID and associated with a Canton Party ID")
-Person(controller, "DID Controller", "Authorizes DID Document lifecycle changes under the selected control model")
-System(apps, "External Applications", "Resolve a DID, verify the result, discover a typed service, and invoke its API")
-System(resolver, "DID Resolver", "Obtains DID state and returns document, version, and verification evidence")
-System_Ext(topology, "Canton Topology / Source of Truth Candidate", "Possible state authority or binding evidence; final role remains open")
-System_Ext(credentials, "Credential Registry", "Service-specific API discovered through a candidate CantonCredentialRegistry entry")
-System_Ext(assets, "Asset Registry", "CIP-56 API discovered through a candidate Cip56AssetRegistry entry")
+Person(subject, "DID Subject / Canton Party", "Entity identified by the DID and associated with a Canton Party ID.")
+Person(controller, "DID Controller", "Role that authorizes DID Document lifecycle changes under the selected control model.")
 
-Rel(controller, resolver, "Authorizes lifecycle transitions through a method-defined mechanism")
-Rel(subject, controller, "Is controlled by or delegates control to")
-Rel(resolver, topology, "Obtains or verifies candidate authoritative state / Party ID binding")
-Rel(apps, resolver, "Resolves DID and verifies result/version")
-Rel(apps, credentials, "Invokes credential API after discovery and separate authorization")
-Rel(apps, assets, "Invokes asset API after discovery and separate authorization")
-Rel(subject, credentials, "May be registry administrator, issuer, or subject")
-Rel(subject, assets, "May administer or use asset registry")
+System(standard, "Canton Network DID Standard", "Defines DID Document control and lifecycle, DID resolution, and discovery through DID Document service entries.")
+System_Ext(services, "Discoverable Application Services", "Services made discoverable through DID Document service entries. Examples include DID Registries, Credential Registries, and Asset Registries.")
+
+Rel(subject, controller, "May act as or delegate control to")
+Rel(subject, standard, "Is identified by a DID governed by")
+Rel(controller, standard, "Controls DID Document lifecycle according to")
+Rel(standard, services, "Enables discovery through DID Document service entries")
 
 SHOW_LEGEND()
 @enduml
