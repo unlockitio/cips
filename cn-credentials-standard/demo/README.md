@@ -66,4 +66,8 @@ Other useful targets are `make daml-build`, `make daml-test`, `make java-test`, 
 - `GET /q/health/live`
 - `GET /q/health/ready`
 
-The API reads only PQS's documented `active(...)` interface surface through prepared JDBC statements. It exposes active records only and does not fabricate inactive records or history.
+Both credential collections support `state=active|archived|all`, four effective-time bounds (`createdFrom`, `createdUntil`, `archivedFrom`, `archivedUntil`), `issuer`, `holder`, `credentialSubjectId`, and literal claim `keyPrefix`; registered credentials additionally support `registryAdmin`. From bounds are inclusive, Until bounds exclusive. Ledger archival is independent of semantic validity or registry expiry.
+
+The API uses only PQS 3.5 public snapshot readers through prepared JDBC statements. Fresh pages capture a bigint snapshot; responses include `snapshotOffset` and `nextPageToken`. Repeat filters and pageSize with a token: token alone continues by keyset, token plus page jumps within the same snapshot. Fresh page requests choose a new snapshot. Tokens expire after `CREDENTIALS_PAGINATION_TTL_SECONDS` (900 by default); configure a shared `CREDENTIALS_PAGINATION_SECRET` of at least 32 UTF-8 bytes. Compose's fallback secret is for local demos only.
+
+Singular `active` lookup rejects duplicate active IDs with 409. `archived` returns the latest creation position; `all` prefers active and otherwise the latest archived record. Missing records return 404; invalid filters/tokens or unavailable snapshots return 400; PQS failures return 503. Registry-list offset pagination and separate unsupported event-history endpoints are unchanged.

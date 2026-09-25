@@ -33,7 +33,7 @@ class CredentialRegistryResourceTest {
             "1.0.0-draft",
             capabilities,
             capabilities,
-            List.of(new IssuanceFactoryResponse("contract", "issuer")));
+            List.of(new IssuanceFactoryResponse("contract", new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("hd", "anchor"))));
   }
 
   @Test

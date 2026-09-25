@@ -12,7 +12,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 public class CredentialResponseMapper {
   public CredentialResponse toResponse(Credential credential) {
     return new CredentialResponse(
-        credential.contractId(), credential.credentialId(), "active", projection(credential));
+        credential.contractId(), credential.credentialId(), state(credential), projection(credential), credential.lifecycle());
   }
 
   public RegisteredCredentialResponse toResponse(RegisteredCredential registeredCredential) {
@@ -21,13 +21,17 @@ public class CredentialResponseMapper {
     return new RegisteredCredentialResponse(
         credential.contractId(),
         credential.credentialId(),
-        "active",
+        state(credential),
         projection(credential),
         new RegistrationResponse(
             registration.registryAdmin(),
             registration.registeredAt(),
             registration.expiresAt(),
-            registration.meta()));
+            registration.meta()), credential.lifecycle());
+  }
+
+  private static String state(Credential credential) {
+    return credential.lifecycle() == null ? "active" : credential.lifecycle().state();
   }
 
   private static CredentialProjection projection(Credential credential) {
@@ -37,6 +41,7 @@ public class CredentialResponseMapper {
         credential.credentialTypes(),
         credential.subjects(),
         credential.holders(),
+        credential.anchorers(),
         credential.validFrom(),
         credential.validUntil());
   }

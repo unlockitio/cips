@@ -5,4 +5,10 @@ public record RegisteredCredentialResponse(
     String credentialId,
     String lifecycleState,
     CredentialProjection credential,
-    RegistrationResponse registration) {}
+    RegistrationResponse registration,
+    io.unlockit.domain.credential.model.CredentialLifecycle lifecycle) {
+  public RegisteredCredentialResponse(String contractId, String credentialId, String lifecycleState,
+      CredentialProjection credential, RegistrationResponse registration) {
+    this(contractId, credentialId, lifecycleState, credential, registration, null);
+  }
+}

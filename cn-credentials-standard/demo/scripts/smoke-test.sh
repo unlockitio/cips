@@ -29,8 +29,8 @@ registry_id=$(printf '%s' "$registries" | jq -r '.items[0].registryId')
 registry=$(curl --fail --silent "$BASE/v1/credential-registries/$registry_id")
 printf '%s' "$registry" | jq -e --arg registry_id "$registry_id" '
   .registryId == $registry_id and
-  ([.issuanceFactories[] | [.issuer, .contractId]] ==
-   ([.issuanceFactories[] | [.issuer, .contractId]] | sort))
+  ([.issuanceFactories[] | .contractId] ==
+   ([.issuanceFactories[] | .contractId] | sort))
 ' >/dev/null
 [ "$(status "$BASE/v1/credential-registries?page=-1&pageSize=50")" = 400 ]
 [ "$(status "$BASE/v1/credential-registries?page=0&pageSize=101")" = 400 ]
@@ -44,7 +44,8 @@ printf '%s' "$intrinsic" | jq -e '
   (.credential.issuer | type == "object") and
   (.credential.credentialTypes | type == "array") and
   (.credential.credentialSubject | type == "array") and
-  (.credential.holders | type == "array") and
+   (.credential.holders | type == "array") and
+   (.credential.anchorers.hd | type == "string") and
   (has("registration") | not)
 ' >/dev/null
 
@@ -59,6 +60,16 @@ printf '%s' "$registered" | jq -e '
 for family in credentials registered-credentials; do
   first=$(curl --fail --silent "$BASE/v1/$family?page=0&pageSize=50")
   printf '%s' "$first" | jq -e '.page == 0 and .pageSize == 50 and (.items | length == 50) and .hasNext' >/dev/null
+  token=$(printf '%s' "$first" | jq -r '.nextPageToken')
+  snapshot=$(printf '%s' "$first" | jq -r '.snapshotOffset')
+  second=$(curl --fail --silent --get "$BASE/v1/$family" --data-urlencode "nextPageToken=$token" --data-urlencode 'pageSize=50')
+  printf '%s' "$second" | jq -e --arg snapshot "$snapshot" '.page == 1 and .snapshotOffset == $snapshot and (.items | length == 50)' >/dev/null
+  jump=$(curl --fail --silent --get "$BASE/v1/$family" --data-urlencode "nextPageToken=$token" --data-urlencode 'page=1' --data-urlencode 'pageSize=50')
+  [ "$(printf '%s' "$second" | jq -c '[.items[].contractId]')" = "$(printf '%s' "$jump" | jq -c '[.items[].contractId]')" ]
+  curl --fail --silent "$BASE/v1/$family?state=all&createdFrom=2000-01-01T00:00:00Z" | jq -e '.snapshotOffset != null and all(.items[]; .lifecycle.createdAtOffset != null)' >/dev/null
+  curl --fail --silent "$BASE/v1/$family?state=archived" | jq -e 'all(.items[]; .lifecycle.state == "archived")' >/dev/null
+  [ "$(status "$BASE/v1/$family?nextPageToken=invalid")" = 400 ]
+  [ "$(status "$BASE/v1/$family?createdFrom=invalid")" = 400 ]
   max_page=$(curl --fail --silent "$BASE/v1/$family?page=0&pageSize=100")
   printf '%s' "$max_page" | jq -e '.pageSize == 100 and (.items | length == 100) and .hasNext' >/dev/null
   first_ids=$(printf '%s' "$first" | jq -c '[.items[].credentialId]')

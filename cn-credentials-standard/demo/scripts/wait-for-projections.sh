@@ -13,7 +13,14 @@ while :; do
 
   expected="$CREDENTIAL_EXPECTED|$CREDENTIAL_EXPECTED|$CREDENTIAL_EXPECTED"
   if [ "$result" = "$expected" ]; then
-    printf '%s\n' "Credential PQS projections ready: credentials=$CREDENTIAL_EXPECTED joined=$CREDENTIAL_EXPECTED"
+    snapshot=$(psql -X -v ON_ERROR_STOP=1 -At -c 'select set_latest(NULL)')
+    psql -X -v ON_ERROR_STOP=1 -c "select validate_offset_exists($snapshot::bigint)" >/dev/null
+    for interface in "$CREDENTIAL_INTERFACE" "$REGISTERED_CREDENTIAL_INTERFACE"; do
+      for reader in "active('$interface', $snapshot::bigint)" "creates('$interface', 0::bigint, $snapshot::bigint)" "archives('$interface', 0::bigint, $snapshot::bigint)"; do
+        psql -X -v ON_ERROR_STOP=1 -c "select contract_id,payload,template_fqn,payload_type,create_event_pk,create_event_id,created_at_ix,created_at_offset,created_effective_at,archive_event_pk,archive_event_id,archived_at_ix,archived_at_offset,archived_effective_at from $reader limit 0" >/dev/null
+      done
+    done
+    printf '%s\n' "Credential PQS projections ready: credentials=$CREDENTIAL_EXPECTED joined=$CREDENTIAL_EXPECTED snapshot=$snapshot"
     exit 0
   fi
 

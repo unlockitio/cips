@@ -18,5 +18,15 @@ public interface CredentialQueryClient {
 
   List<CredentialRegistryFactory> findCredentialRegistryFactories(String registryId);
 
+  long latestOffset();
+
+  void validateOffset(long offset);
+
+  List<Credential> findCredentialHistory(CredentialFilters filters, long snapshot,
+      String lastId, String lastContract, String credentialId, int limit, long offset);
+
+  List<RegisteredCredential> findRegisteredCredentialHistory(CredentialFilters filters, long snapshot,
+      String lastId, String lastContract, String credentialId, int limit, long offset);
+
   void checkCredentialProjections();
 }

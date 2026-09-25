@@ -18,6 +18,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class CredentialRegistryManagerTest {
+  private static com.fasterxml.jackson.databind.JsonNode anchors() {
+    return new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode().add("anchor");
+  }
+
   @Mock CredentialQueryClient queryClient;
   private CredentialRegistryManager manager;
 
@@ -27,20 +31,20 @@ class CredentialRegistryManagerTest {
   }
 
   @Test
-  void aggregatesFactoriesAndSortsByIssuerThenContractId() {
+  void aggregatesFactoriesAndSortsByContractId() {
     when(queryClient.findCredentialRegistryFactories("admin"))
         .thenReturn(
             List.of(
-                new CredentialRegistryFactory("contract-b", "admin", "issuer-b"),
-                new CredentialRegistryFactory("contract-c", "admin", "issuer-a"),
-                new CredentialRegistryFactory("contract-a", "admin", "issuer-a")));
+                new CredentialRegistryFactory("contract-b", "admin", anchors()),
+                new CredentialRegistryFactory("contract-c", "admin", anchors()),
+                new CredentialRegistryFactory("contract-a", "admin", anchors())));
 
     var registry = manager.findByRegistryId("admin");
 
     assertEquals("admin", registry.registryId());
     assertEquals("contract-a", registry.issuanceFactories().get(0).contractId());
-    assertEquals("contract-c", registry.issuanceFactories().get(1).contractId());
-    assertEquals("contract-b", registry.issuanceFactories().get(2).contractId());
+    assertEquals("contract-b", registry.issuanceFactories().get(1).contractId());
+    assertEquals("contract-c", registry.issuanceFactories().get(2).contractId());
   }
 
   @Test
@@ -55,7 +59,7 @@ class CredentialRegistryManagerTest {
   void pagesDistinctRegistryIdsBeforeAggregation() {
     when(queryClient.findCredentialRegistryIds(0, 51)).thenReturn(List.of("admin"));
     when(queryClient.findCredentialRegistryFactories("admin"))
-        .thenReturn(List.of(new CredentialRegistryFactory("contract", "admin", "issuer")));
+        .thenReturn(List.of(new CredentialRegistryFactory("contract", "admin", anchors())));
 
     var page = manager.findPage(null, null);
 

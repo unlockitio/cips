@@ -2,38 +2,28 @@ package io.unlockit.application.credential.api;
 
 import io.unlockit.application.credential.dto.CredentialPageResponse;
 import io.unlockit.application.credential.dto.CredentialResponse;
-import io.unlockit.application.credential.manager.CredentialManager;
+import io.unlockit.application.credential.manager.CredentialListingManager;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 
 @Path("/v1/credentials")
 @Produces(MediaType.APPLICATION_JSON)
 public class CredentialResource {
-  private final CredentialManager manager;
+  private final CredentialListingManager manager;
 
   @Inject
-  public CredentialResource(CredentialManager manager) {
-    this.manager = manager;
-  }
+  public CredentialResource(CredentialListingManager manager) { this.manager = manager; }
 
   @GET
   @Path("/{credentialId}")
-  public CredentialResponse findByCredentialId(
-      @PathParam("credentialId") String credentialId,
-      @QueryParam("lifecycleScope") String lifecycleScope) {
-    return manager.findByCredentialId(credentialId, lifecycleScope);
+  public CredentialResponse findByCredentialId(@PathParam("credentialId") String credentialId,
+      @BeanParam CredentialParameters parameters) {
+    return manager.get(credentialId, parameters.state());
   }
 
   @GET
-  public CredentialPageResponse findPage(
-      @QueryParam("page") String page,
-      @QueryParam("pageSize") String pageSize,
-      @QueryParam("lifecycleScope") String lifecycleScope) {
-    return manager.findPage(page, pageSize, lifecycleScope);
+  public CredentialPageResponse findPage(@BeanParam CredentialParameters parameters) {
+    return manager.list(parameters.page, parameters.pageSize, parameters.nextPageToken, parameters.filters(false));
   }
 }

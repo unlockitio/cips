@@ -157,6 +157,8 @@ services:
     build: ./java-api
     environment:
       CREDENTIALS_HTTP_PORT: "8080"
+      CREDENTIALS_PAGINATION_SECRET: ${CREDENTIALS_PAGINATION_SECRET:-local-demo-credentials-secret-change-before-deployment}
+      CREDENTIALS_PAGINATION_TTL_SECONDS: ${CREDENTIALS_PAGINATION_TTL_SECONDS:-900}
       PQS_JDBC_URL: jdbc:postgresql://credential-postgres:5432/${POSTGRES_DB:-pqs}
       PQS_DB_USER: ${POSTGRES_USER:-pqs}
       PQS_DB_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}

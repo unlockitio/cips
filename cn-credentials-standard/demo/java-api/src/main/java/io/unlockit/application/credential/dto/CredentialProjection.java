@@ -8,5 +8,6 @@ public record CredentialProjection(
     JsonNode credentialTypes,
     JsonNode credentialSubject,
     JsonNode holders,
+    JsonNode anchorers,
     String validFrom,
     String validUntil) {}

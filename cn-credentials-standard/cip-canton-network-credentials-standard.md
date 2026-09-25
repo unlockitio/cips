@@ -31,9 +31,13 @@ The standard supports three deployment modes:
 
 ### Architecture Overview (Non-Normative)
 
-The System Context view treats the Canton Network Credentials Standard as one system and shows only its people and external-system relationships. Internal interfaces and deployment components are intentionally deferred to the Container view. Credential issuance remains the responsibility of issuer-specific software. Issuance applications can support direct workflows without registry publication or can add registration and HTTP exposure under deployment-defined access policy. Issuers identify the assessment policy under which they issue credentials. App Users use both app or wallet providers and network explorers as separate applications: wallets may support holder workflows, while explorers consume credential records and history exposed to them by a deployment. Using an explorer does not imply ledger Party authority. Issuers and holders may also use these applications. Entities may act in multiple roles. For example, a bank can issue credentials to its customers while also holding credentials issued to it by regulators.
+The system context centers on the Canton Network Credentials Standard as the C4 system of interest. Direct issuance applications, registry-facing issuance applications, wallets, and explorers use the credential and registry interfaces defined by the standard. Registry-facing applications may resolve a registry DID through a deployed Canton Network DID Registry or Resolver to discover endpoint candidates before invoking the Credential Registry API.
 
-![System context showing the Canton Network Credentials Standard as one system used through credential issuance applications, an app or wallet provider, and a network explorer consuming deployment-exposed records and history, with the DSO Party collectively controlled by all SVs administering and operating the DSO instance.](images/credentials-system-context.png)
+Credential issuance remains the responsibility of issuer-specific software. Credential Issuers use direct or registry-facing issuance applications. Credential Holders receive and use direct credentials without required registry publication. App Users use app or wallet providers and network explorers as separate applications: wallets may support holder workflows, while explorers consume credential records and history exposed to them by a deployment. Using an explorer does not imply ledger Party authority. Issuers and holders may also use these applications. Entities may act in multiple roles. For example, a bank can issue credentials to its customers while also holding credentials issued to it by regulators.
+
+The DSO deployment profile has one logical DSO Credential Registry. The DSO Party, collectively controlled by all SVs, administers and operates it through the registry-facing issuance application. The standard remains a conceptual specification boundary rather than a deployed service.
+
+![System context showing credential issuers, credential holders, application users, and DSO governance interacting through direct and registry-facing issuance applications, wallets, and explorers. Registry-facing applications may use the Canton Network DID Registry or Resolver to discover endpoints for APIs defined by the Canton Network Credentials Standard.](images/credentials-system-context.png)
 
 *System Context for the Canton Network Credentials Standard and its external actors. [C4-PlantUML source](images/credentials-system-context.puml).*
 
@@ -46,12 +50,15 @@ The System Context elements below identify the people and external systems shown
 | Credential Issuer | Person | Organization or individual acting in the issuer role. |
 | Credential Holder | Person | Party acting in the holder role. |
 | App User | Person | User of credential applications, wallets, and network explorers; using an explorer does not imply ledger Party authority. |
-| Canton Network Credentials Standard | System | The single in-scope system for portable credentials, registration, registry HTTP access, lifecycle rules, and the DSO deployment profile. |
+| Canton Network Credentials Standard | System of interest | Conceptual specification boundary for portable credentials, registration, registry HTTP access, lifecycle rules, and credential and registry API contracts. |
 | Direct Credential Issuance Application | External system | Issuer-specific software for issuance and holder workflows without required registry publication. |
-| Registry-facing Credential Issuance Application | External system | Issuer-specific software that adds registration or HTTP exposure; the promoted DSO deployment profile is a concrete instance. |
-| App / Wallet Provider | External system | Application or wallet that handles credentials for issuers, holders, and app users. |
-| Network Explorer | External system | Explorer that consumes credential records and lifecycle information exposed to it under deployment policy. |
-| DSO Party / SV Governance | Person | The DSO Party, collectively controlled by all SVs, acting as administrator and operator of the DSO Credential Registry. |
+| Registry-facing Credential Issuance Application | External system | Issuer-specific software that adds registration or HTTP exposure and may resolve a known registry DID to obtain endpoint candidates before invoking the Credential Registry API defined within the Canton Network Credentials Standard. |
+| App / Wallet Provider | External system | Application or wallet that handles credentials for issuers, holders, and app users using APIs defined by the standard. |
+| Network Explorer | External system | Explorer that uses APIs defined by the standard to consume credential records and lifecycle information exposed under deployment policy. |
+| Canton Network DID Registry / Resolver | External system | Deployed registry or resolver that resolves a known registry DID and returns endpoint candidates. |
+| DSO Party / SV Governance | Person | The DSO Party, collectively controlled by all SVs, acting as administrator and operator of the one logical DSO Credential Registry through the registry-facing application. |
+
+DID discovery identifies or resolves endpoint candidates only. It does not establish registry authorization, endpoint trust, caller authentication, quorum or failover behavior, or governance approval. Those controls remain separate deployment responsibilities.
 
 #### Credential Registry Reference Application (DSO-managed)
 
@@ -65,7 +72,7 @@ The core standard defines Daml interfaces for the base `Credential`, `Registered
 
 #### Daml Interfaces
 
-The four candidate credential Daml interfaces are `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`; `CredentialRegistryFactory` provides the separate generic issuance capability. Their candidate definitions are checked in at [`demo/interface/daml/Canton/Network/Credentials/V1.daml`](demo/interface/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`demo/interface/README.md`](demo/interface/README.md); concrete templates, package naming for standardization, and signatories remain outside that source.
+The four candidate credential Daml interfaces are `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`; `CredentialRegistryFactory` provides the separate generic issuance capability. Their candidate definitions are checked in at [`demo/interface/daml/Canton/Network/Credentials/V1.daml`](demo/interface/daml/Canton/Network/Credentials/V1.daml), with candidate status and build instructions in [`demo/interface/README.md`](demo/interface/README.md); concrete templates and package naming for standardization remain outside that source; implementing templates MUST enforce the signatory rules below.
 
 ##### Credential Interface
 
@@ -77,7 +84,7 @@ A base credential represents issuer assertions about one or more credential subj
 - credential subjects;
 - validity interval.
 
-Holders are separate Canton operational metadata.
+Holders and anchorers are separate Canton operational metadata. Holders may be empty; anchorers MUST be nonempty. Concrete credential signatories MUST be exactly the stable deduplicated union of anchorers followed by holders. Issuer, subject, holder, anchorer and registry administrator roles are independent. An external textual issuer need not be a Party; anchoring proves neither its signature nor the truth of its claims.
 
 Field position and explicit Daml authority keep identity and operational roles independent:
 
@@ -97,11 +104,12 @@ In practice, clients use the typed fields according to their declared roles, and
   | `CredentialView.issuer : W3C_VC_Identifier` | [`issuer`](https://www.w3.org/TR/vc-data-model-2.0/#issuer) | Identifier selected by the ADT variant | Issuer identity retains its field-specific role. |
   | `CredentialView.validFrom : Optional Time`; `CredentialView.validUntil : Optional Time` | [`validFrom`, `validUntil`](https://www.w3.org/TR/vc-data-model-2.0/#validity-period) | Profile-defined date-time representation | Start of validity and optional intrinsic end of validity. Natural expiry after `validUntil` is derived and needs no ledger transaction. |
   | `CredentialView.credentialSubject : NonEmpty CredentialSubject` | [`credentialSubject`](https://www.w3.org/TR/vc-data-model-2.0/#credential-subject) | One subject object or an array, as the profile permits | The interface enforces `1..n` subjects. |
-  | `CredentialView.holders : NonEmpty Party` | Canton extension with no core-VC counterpart | Profile extension when defined | Canton operational metadata for the canonical contract. |
+  | `CredentialView.holders : [Party]` | Canton extension with no core-VC counterpart | Profile extension when defined | Zero or more operational holder Parties. |
+  | `CredentialView.anchorers : NonEmpty Party` | Canton extension with no core-VC counterpart | Profile extension when defined | Nonempty anchoring authority, retained even when holders are empty; not proof of external issuer claims or signature. |
 
 Semantic correspondence alone does not make `CredentialView` a conforming compacted JSON-LD VC. External conformance additionally requires the mandated [`@context`](https://www.w3.org/TR/vc-data-model-2.0/#contexts), W3C-compatible [`identifiers`](https://www.w3.org/TR/vc-data-model-2.0/#identifiers), and a [`securing mechanism`](https://www.w3.org/TR/vc-data-model-2.0/#securing-mechanisms). `CredentialView.credentialTypes` supplies the W3C `type` values. See Credential Interface Normalization for detailed serialization rules.
 
-`holders` is Canton operational metadata and MUST be excluded from standard W3C serialization unless a named extension profile defines its field, context, semantics, and security considerations. The interface view does not itself grant Daml visibility. Concrete templates define stakeholders and observers; when designated holders are made stakeholders, they see the full canonical credential and complete holder list.
+`holders` and `anchorers` are Canton operational metadata and MUST be excluded from standard W3C serialization unless a named extension profile defines their fields, context, semantics, and security considerations. The interface view does not itself grant Daml visibility. Concrete templates MUST make holders and anchorers signatories as specified above; they see the full canonical credential and complete role lists. Templates may additionally define observers.
 
 The `credentialSubject` field expands into one or more subject records whose optional identifiers and claims have the following fields.
 
@@ -155,7 +163,8 @@ data CredentialView = CredentialView with
   validFrom : Optional Time
   validUntil : Optional Time
   credentialSubject : NonEmpty CredentialSubject
-  holders : NonEmpty Party
+  holders : [Party]
+  anchorers : NonEmpty Party
   deriving (Eq, Show)
 
 data Credential_RemoveSelfAsHolderResult = Credential_RemoveSelfAsHolderResult with
@@ -177,35 +186,40 @@ interface Credential where
       holder : Party
     controller holder
     do
-      let currentHolders = toList (view this).holders
+      let currentHolders = (view this).holders
       assertMsg "exercising party is not a credential holder" (elem holder currentHolders)
-      assertMsg "the final holder cannot relinquish the credential" (length currentHolders > 1)
       credential_removeSelfAsHolderImpl this self arg
 
   credential_archiveAsAllHoldersImpl : ContractId Credential -> Credential_ArchiveAsAllHolders -> Update Credential_ArchiveResult
 
   choice Credential_ArchiveAsAllHolders : Credential_ArchiveResult
-    controller (toList (view this).holders)
+    controller (if null (view this).holders then toList (view this).anchorers else (view this).holders)
     do
       credential_archiveAsAllHoldersImpl this self arg
+
+  choice Credential_ArchiveAsAnchorers : Credential_ArchiveResult
+    controller (toList (view this).anchorers)
+    do
+      credential_archiveAsAllHoldersImpl this self Credential_ArchiveAsAllHolders
 ```
 
-`Credential_RemoveSelfAsHolder` is a consuming choice controlled exactly by its `holder` argument. The interface verifies that the controller is a current holder and that at least one other holder remains, then delegates concrete replacement construction to the abstract implementation method. The implementation MUST consume the old canonical credential, create exactly one replacement without that holder, preserve the remaining holder order, and return its `ContractId Credential` in `Credential_RemoveSelfAsHolderResult`. It MUST preserve logical credential identity, credential types, issuer, subjects and claims, intrinsic validity, and unrelated profile fields. A holder can remove only itself, never another holder.
+`Credential_RemoveSelfAsHolder` is a consuming choice controlled exactly by its `holder` argument. The interface verifies that the controller is a current holder and permits removal of the final holder, then delegates concrete replacement construction to the abstract implementation method. The implementation MUST consume the old canonical credential, create exactly one replacement without that holder, preserve the remaining holder order, and return its `ContractId Credential` in `Credential_RemoveSelfAsHolderResult`. It MUST preserve logical credential identity, credential types, issuer, subjects and claims, intrinsic validity, and unrelated profile fields. A holder can remove only itself, never another holder.
 
-The generic interface standardizes the choice, argument, controller, preconditions, consuming replacement semantics, and result. The implementing template or profile constructs the concrete replacement and MUST satisfy its signatory, observer, and authorization rules. A holder-controlled interface exercise does not authorize creation under arbitrary template signatories. This candidate therefore does not invent an issuer or signatory model, and includes no fabricated concrete fixture.
+The generic interface standardizes the choice, argument, controller, preconditions, consuming replacement semantics, and result. The implementing template or profile constructs the concrete replacement and MUST satisfy its signatory, observer, and authorization rules. A holder-controlled interface exercise does not authorize creation under arbitrary template signatories. The required signatories are the stable deduplicated anchorer-plus-holder union; the concrete demo enforces this directly. Replacement preserves anchorers even when no holders remain.
 
-`Credential_ArchiveAsAllHolders` remains unchanged: it is a terminal action controlled jointly by every Party in `holders`; all holders must authorize it, and it creates no replacement. The base interface does not define issuer-authorized archival or revocation because `W3C_VC_Identifier Text` cannot control a Daml choice. A profile or template that needs either operation MUST define an explicit Party authorization mechanism and choice, and MUST NOT infer that Party from holders, subjects, claims, or external text. Wallets MAY remove their local reference or presentation without changing the ledger contract. They MUST distinguish that local action from holder relinquishment, global archival, issuer revocation, expiration, registry removal, and deregistration.
+`Credential_ArchiveAsAllHolders` is terminal and controlled jointly by every holder, or by the nonempty anchorer list when holderless. `Credential_ArchiveAsAnchorers` independently allows the anchorers to archive any credential. Both create no replacement and never use an empty controller set. The base interface does not define issuer-authorized archival or revocation because `W3C_VC_Identifier Text` cannot control a Daml choice. A profile or template that needs either operation MUST define an explicit Party authorization mechanism and choice, and MUST NOT infer that Party from holders, subjects, claims, or external text. Wallets MAY remove their local reference or presentation without changing the ledger contract. They MUST distinguish that local action from holder relinquishment, global archival, issuer revocation, expiration, registry removal, and deregistration.
 
 **Base `Credential` choices**
 
 | Choice | Controller | Preconditions | Consuming outcome |
 | --- | --- | --- | --- |
-| `Credential_RemoveSelfAsHolder` | Exactly `holder` | `holder` is current and at least one other holder remains | Replaces the canonical contract once, preserving credential state and remaining holder order; returns `replacementCredential : ContractId Credential`. |
-| `Credential_ArchiveAsAllHolders` | Every current holder jointly | All holders authorize | Terminates the current canonical contract without replacement. |
+| `Credential_RemoveSelfAsHolder` | Exactly `holder` | `holder` is current; final-holder removal is permitted | Replaces the canonical contract once, preserving credential state and remaining holder order; returns `replacementCredential : ContractId Credential`. |
+| `Credential_ArchiveAsAllHolders` | Every current holder jointly, or anchorers when holderless | The nonempty controller set authorizes | Terminates the current canonical contract without replacement. |
+| `Credential_ArchiveAsAnchorers` | All anchorers jointly | Anchorers authorize regardless of holder count | Terminates the current canonical contract without replacement. |
 
 ###### Credential Interface Normalization
 
-One logical VC uses one canonical `Credential` contract. Every credential MUST have at least one holder, and all current holders share its contract ID, full payload, and intrinsic validity. Concrete templates MUST reject duplicate holders and use deterministic Party ordering. The view is not mutated in place: holder self-removal consumes the canonical contract and creates one replacement through the standardized choice. The replacement MUST remove exactly the exercising holder and preserve the order of all remaining holders. Frequent independently mutable or holder-private relationships MAY require future separate holder-association contracts, but this CIP does not define them. Optional association contracts MUST NOT imply a relationship between a credential subject and a Party.
+One logical VC uses one canonical `Credential` contract. Every credential MUST have at least one anchorer and MAY have no holders. Current holders and anchorers share its contract ID, full payload, and intrinsic validity. Signatories MUST use stable deduplication of anchorers followed by holders; role-list order is retained. The view is not mutated in place: holder self-removal consumes the canonical contract and creates one replacement through the standardized choice. The replacement MUST remove exactly the exercising holder and preserve the order of all remaining holders. Frequent independently mutable or holder-private relationships MAY require future separate holder-association contracts, but this CIP does not define them. Optional association contracts MUST NOT imply a relationship between a credential subject and a Party.
 
 - Concrete templates MUST reject the reserved key `id` in `claims`, including when the subject ID is `None`.
 - W3C serializers MUST map the Daml field `credentialTypes` to JSON-LD `type`; ledger and PQS payloads retain `credentialTypes`.
@@ -250,9 +264,13 @@ The registration view carries the administering Party, registration time, option
 
 | Choice | Input | Controller | Result | Behavior |
 | --- | --- | --- | --- | --- |
-| `RegisteredCredentialLifecycle_Renew` | `expectedCredential : CredentialView`; `issuer : Party`; `registryAdmin : Party`; `validUntil : Time`; `profileAuthorization : Optional (TextMap Api.Token.MetadataV1.AnyValue)`; `paymentEvidence : Optional (TextMap Api.Token.MetadataV1.AnyValue)` | `issuer` and `registryAdmin` jointly | `RegisteredCredentialLifecycle_RenewResult` | Validates the exact current credential view, then consumes and atomically replaces the registered credential, extending intrinsic `validUntil` and registration `expiresAt` to the same strictly later time while preserving all other fields. Profile authorization and payment evidence are optional profile-defined inputs. |
+| `RegisteredCredentialLifecycle_Renew` | Profile-defined renewal request, exact current credential view, and registry authorization | Unresolved; current anchorers plus `registryAdmin` is a candidate only | `RegisteredCredentialLifecycle_RenewResult` | Candidate adapter for an atomically coordinated intrinsic renewal and registration extension. It is not required for either lifecycle, and its authority and payment semantics remain unresolved. |
 
-Callers MUST obtain `expectedRegistryAdmin` from a trusted source. Implementations MUST validate it against the view. Package vetting and registry-provider security review remain necessary.
+Intrinsic credential lifecycle is registry-independent. Registration is optional, and intrinsic issuance, renewal, expiry, or archival neither requires nor implies registration, registration continuation, or a registry mutation. Conversely, registration retention does not extend, revive, or otherwise alter the credential. Implementations may keep the two lifecycles independent, expose them as separate operations, coordinate them atomically when a profile defines the required authority, or orchestrate them as multiple steps with explicit partial-failure handling. An optional capability MUST NOT mandate any deployment topology.
+
+Any operation that creates, extends, removes, or otherwise changes registration MUST have registry authorization. Renewal authority itself remains unresolved: authorization by the current credential anchorers together with `registryAdmin` is a candidate only, and a payer MAY be a different party. Payment evidence is a condition that a selected profile may require; payment is not generic authority to renew a credential or mutate a registration.
+
+The interface below is therefore candidate material rather than a completed generic renewal contract. Before standardization, the choice shape, controllers, independent time inputs, and failure semantics MUST be revised to match a selected profile. Callers MUST obtain `expectedRegistryAdmin` from a trusted source. Implementations MUST validate it against the view. Package vetting and registry-provider security review remain necessary.
 
 ```daml
 -- Candidate; sourced from demo/interface/daml/Canton/Network/Credentials/V1.daml.
@@ -290,14 +308,12 @@ interface RegisteredCredentialLifecycle requires RegisteredCredential, Credentia
   choice RegisteredCredentialLifecycle_Renew : RegisteredCredentialLifecycle_RenewResult
     with
       expectedCredential : CredentialView
-      issuer : Party
       registryAdmin : Party
       validUntil : Time
       profileAuthorization : Optional (TextMap Api.Token.MetadataV1.AnyValue)
       paymentEvidence : Optional (TextMap Api.Token.MetadataV1.AnyValue)
-    controller issuer, registryAdmin
+    controller (toList expectedCredential.anchorers), registryAdmin
     do
-      assertMsg "party is not the credential issuer" (expectedCredential.issuer == W3C_VC_Identifier_Party issuer)
       assertMsg "renewal requires an existing validUntil" (expectedCredential.validUntil /= None)
       assertMsg "renewal validUntil must be strictly later" (Some validUntil > expectedCredential.validUntil)
       assertMsg "party is not the registry administrator" (registryAdmin == (view this).registryAdmin)
@@ -312,20 +328,20 @@ When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfA
 
 ##### Credential Registry Factory Interface
 
-`CredentialRegistryFactory` provides the generic initial-issuance entry point for creating a registered credential. Its view identifies the registry administrator and the issuer authorized to create credentials through that factory.
+`CredentialRegistryFactory` provides the generic initial-issuance entry point for creating a registered credential. Its view identifies the registry administrator and the nonempty anchorer list authorized to anchor credentials through that factory.
 
 **Table 7. `CredentialRegistryFactoryView` fields**
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `registryAdmin` | `Party` | Party administering registry registration. |
-| `issuer` | `Party` | Party authorized to issue credentials through this factory. |
+| `anchorers` | `NonEmpty Party` | Mandatory Parties authorizing anchoring through this factory. |
 
 **Table 8. `CredentialRegistryFactory` choices**
 
 | Choice | Controller | Inputs and preconditions | Result |
 | --- | --- | --- | --- |
-| `CredentialRegistryFactory_Issue` | `issuer` | The supplied credential issuer and registration administrator MUST match the factory authority. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
+| `CredentialRegistryFactory_Issue` | Stable deduplicated anchorers plus holders | The credential anchorers and registration administrator MUST match the factory authority; all proposed signatories authorize creation. Textual issuers are supported. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
 
 `CredentialRegistryFactory_Issue` is nonconsuming, so the factory remains available after issuance. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, and standalone retention updates are non-normative roadmap topics. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
 
@@ -343,7 +359,7 @@ The Canton ledger is the source of transaction truth. Participant Query Store (P
 
 The intrinsic credential family reads active `Credential` projections directly. The registered credential family reads active `Credential` and `RegisteredCredential` interface projections joined by identical contract ID. The `Credential` projection supplies intrinsic fields, while the `RegisteredCredential` projection supplies registration metadata. Both families MUST use only rows visible to the configured PQS ledger identity. API reads are eventually consistent with PQS and may lag the Canton ledger.
 
-Inactive or archived record projections are distinct from active interface projections. Ledger transaction or event history is also distinct from record retrieval because events can have different fields, cardinality, and ordering. This CIP does not assert that PQS provides a stable inactive or archived SQL reader: current evidence establishes `active(...)`, but no stable archived or inactive PQS SQL reader. Consequently:
+Inactive or archived record projections are distinct from active interface projections. Ledger transaction or event history is also distinct from record retrieval because events can have different fields, cardinality, and ordering. The PQS 3.5 reference implementation selects a bigint snapshot with `set_latest(NULL)`, validates it with `validate_offset_exists(bigint)`, and reads `active(name,bigint)`, `creates(name,0,bigint)`, or `archives(name,0,bigint)`. Registered joins match contract ID and compatible creation event ID, offset and index; archived joins also match archive identity. Lifecycle metadata comes from the documented public reader columns, never physical tables. Consequently:
 
 - Every conforming implementation MUST support active record retrieval.
 - An implementation MUST advertise whether `inactiveRecords` and `eventHistory` are supported in each credential registry item.
@@ -361,7 +377,7 @@ A conforming implementation MUST provide logical indexes or equivalent access pa
 
 ##### Credential Registries API
 
-`GET /v1/credential-registries` discovers logical credential registries and `GET /v1/credential-registries/{registryId}` retrieves one exact registry. In v1, `registryId` MUST be the canonical string form of the registry administrator Party and MUST equal `registryAdmin`. A factory contract ID MUST NOT be used as registry identity. Every active `CredentialRegistryFactory` projection with the same `registryAdmin` belongs to one logical registry. Its subordinate `issuanceFactories` references MUST expose `contractId` and `issuer` and MUST be ordered by issuer and then contract ID.
+`GET /v1/credential-registries` discovers logical credential registries and `GET /v1/credential-registries/{registryId}` retrieves one exact registry. In v1, `registryId` MUST be the canonical string form of the registry administrator Party and MUST equal `registryAdmin`. A factory contract ID MUST NOT be used as registry identity. Every active `CredentialRegistryFactory` projection with the same `registryAdmin` belongs to one logical registry. Its subordinate `issuanceFactories` references MUST expose `contractId` and `anchorers` and MUST be ordered by contract ID.
 
 A registry item enables API-version rollout and reports each resource family's capabilities and constraints independently. It MUST identify the API version and, for both credentials and registered credentials, active, inactive-record, and event-history capabilities; supported lifecycle scopes and filters; and default and maximum page sizes. It MAY report additional implementation limits, including limits on subject claims or stored credentials. See [DSO Credential Registry Limits](#dso-credential-registry-limits).
 
@@ -382,12 +398,14 @@ Pagination requirements are normative:
 - `page` MUST be a zero-based integer and defaults to `0`.
 - `pageSize` MUST be a positive integer. The declared default is `50` and the declared maximum is `100` unless the matching credential registry item declares different values permitted by a future compatible profile.
 - An implementation MUST reject invalid values, values above the declared maximum, and offsets it cannot represent safely.
-- The offset MUST be `page * pageSize`.
+- Fresh requests select a snapshot and use offset `page * pageSize`. A signed `nextPageToken` without `page` continues by keyset; token plus `page` jumps at the same snapshot. Clients repeat the normalized filters and page size bound into the token.
 - Ordering MUST be deterministic. Credential-record pages MUST order by logical credential ID and use contract ID as the final tie-breaker after any other declared sort keys.
 - An implementation MUST fetch at most `pageSize + 1` matching rows using `LIMIT` and `OFFSET` or equivalent bounded operations.
 - The extra item, when present, MUST determine `hasNext` and MUST NOT appear in `items`.
-- The response MUST contain `items`, `page`, `pageSize`, and `hasNext`. A total count is not required.
-- Offset pagination does not provide snapshot consistency. Concurrent updates can shift page boundaries and cause duplicates or omissions across requests; clients MUST tolerate that drift.
+- Credential collection responses MUST contain `items`, `page`, `pageSize`, `hasNext`, decimal-string `snapshotOffset`, and nullable `nextPageToken`. A total count is not required.
+- Continuations MUST validate token signature, expiry, resource, state, every filter, page size, and snapshot availability before querying. Invalid tokens or unavailable snapshots return 400. A new request without a token chooses a fresh snapshot. Registry-list pagination remains offset-based without snapshot consistency.
+
+Both collections support `state=active|archived|all` (default active), inclusive `createdFrom`/`archivedFrom`, exclusive `createdUntil`/`archivedUntil`, and `issuer`, `holder`, `credentialSubjectId`, and literal claim `keyPrefix` filters. Registered credentials additionally support `registryAdmin`. Time filters use PQS effective timestamps, not credential validity or registry expiry. Singular `archived` selects the latest creation offset, index and contract-ID tie-breaker; `all` prefers active then latest archived. Duplicate active matches return 409.
 
 Event-history pagination follows the same bounds and look-ahead rule but uses the event ordering declared in the OpenAPI contract rather than credential-record ordering.
 
@@ -403,12 +421,13 @@ The normative lifecycle model contains exactly `CredentialRegistryFactory_Issue`
 
 | Current state | Operation | Next state | Required authority | Required semantics |
 | --- | --- | --- | --- | --- |
-| No credential | `CredentialRegistryFactory_Issue` | One registered credential | Configured issuer | Creates one canonical registered credential. |
-| Credential with finite `validUntil` | `CredentialLifecycle_Renew` | Replacement credential | Issuer | Requested `validUntil` MUST be strictly later. The old contract is consumed and exactly one replacement is created atomically, preserving other fields. |
-| Registered credential with finite `validUntil` and `expiresAt` | `RegisteredCredentialLifecycle_Renew` | Replacement registered credential | Issuer and registry administrator jointly | Both values become the same strictly later requested time in one atomic replacement; all other credential and registration fields are preserved. |
+| No credential | `CredentialRegistryFactory_Issue` | One registered credential | Configured anchorers plus holders | Creates one canonical registered credential. |
+| Credential with finite `validUntil` | `CredentialLifecycle_Renew` | Replacement credential | Unresolved; current anchorers are a candidate | Requested `validUntil` MUST be strictly later. The old contract is consumed and exactly one replacement is created atomically, preserving other fields. Registration is unchanged and need not continue. |
+| Registered credential | Profile-defined registration extension | Replacement registration view | Registry authorization; payment MAY be an additional condition | A new `expiresAt` affects registration only. It MUST NOT alter or revive the credential or require equality with `validUntil`. |
+| Credential and registration selected for coordinated change | Optional profile adapter or orchestrator | Profile-defined results | Both intrinsic and registry authorities | May coordinate independent operations atomically or orchestrate separate operations, with topology and failure semantics declared by the profile. |
 | Any credential | Natural passage beyond `validUntil` | Derived expired usability | None | No transaction or registry change. |
 
-`CredentialLifecycle` is optional and requires `Credential`. `RegisteredCredential` is registration-only and requires `Credential`, so lifecycle support is not mandatory on registration. `RegisteredCredentialLifecycle` requires `RegisteredCredential`, `CredentialLifecycle`, and the compiler-required explicit transitive `Credential`. A concrete contract MAY implement all four interfaces: `Credential`, `CredentialLifecycle`, `RegisteredCredential`, and `RegisteredCredentialLifecycle`.
+`CredentialLifecycle` is optional and requires `Credential`. `RegisteredCredential` is registration-only and requires `Credential`, so lifecycle support is not mandatory on registration. `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` are independent and MUST NOT be required to exist together or be equal. A registration may outlive an intrinsically expired credential for retention or audit purposes, but cannot make it valid. An intrinsic credential may remain valid after registration expires or is removed. `RegisteredCredentialLifecycle` is an optional coordination candidate; its presence MUST NOT couple the lifecycles or prescribe whether components are colocated, separate, atomically coordinated, or orchestrated.
 
 The generic model keeps intrinsic validity and registry retention separate. The DSO profile requires `validUntil == expiresAt` where both are present and renews both atomically. Payment MAY be additional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`; it is not part of the generic interface.
 
@@ -422,7 +441,7 @@ This section explores a concrete composition of the Credentials standard with th
 
 The explored profile has one logical DSO Credential Registry. One DSO Party, collectively controlled by all SVs, is both registry administrator and operator. Separating those concepts does not create separate parties or delegated operators. Registry administration does not make the DSO Party an issuer, holder, DID controller, or other stakeholder of every credential.
 
-The profile does not partition registry state or workload by issuer namespace, assign operation to Validators, delegate operation to other parties, or use Scan as a registry router or proxy. Internal distribution, replication, or multiple access endpoints, if implemented, must present one logical registry and must not imply separate registries, public partitions, or namespace-based routing.
+The profile does not partition registry state or workload by issuer namespace, assign operation to Validators, delegate operation to other parties, or use Scan as a registry router or proxy. Internal distribution, replication, or multiple access endpoints, if implemented, must present one logical registry and must not imply separate registries, public partitions, or namespace-based routing. Components remain free to run independently, as separate deployments, under atomic coordination, or through orchestration. Optional registration, lifecycle, payment, discovery, and BFT capabilities MUST NOT mandate colocation or another topology. A completed DSO deployment profile must designate endpoint candidates as equivalent under explicit rules and require a BFT read policy across them. Those properties come from the DSO profile, not from `cn-did-standard`, and remain unresolved in this draft.
 
 #### Deployment Architecture, Administration, and Operation
 
@@ -434,11 +453,11 @@ The registry item returned by `GET /v1/credential-registries/{registryId}` adver
 
 #### Concrete Expiry and Renewal Policy
 
-The DSO profile keeps intrinsic validity and registry retention conceptually distinct but requires `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` to be equal where both are present. By default, initial registration requires no CC payment and both values are set within 90 days, configurable by SV voting.
+The DSO profile keeps intrinsic validity and registry retention independent. `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` are never required to be equal. By default, initial registration requires no CC payment and registration `expiresAt` is set within 90 days, configurable by SV voting; this default does not constrain intrinsic credential validity.
 
-A DSO `RegisteredCredentialLifecycle_Renew` MUST be jointly authorized by the issuer and DSO registry administrator. It consumes the old canonical contract and creates exactly one replacement atomically, setting both values to the same strictly later time and preserving every other credential and registration field.
+A concrete DSO paid extension changes only `RegisteredCredentialView.expiresAt`. It requires registry authorization and MUST NOT change `CredentialView.validUntil`, renew or revive an expired credential, alter credential claims, or imply continued registration after a separate intrinsic renewal. Renewal authority remains unresolved. Current anchorers plus `registryAdmin` is a candidate authorization set only; the payer MAY differ from every authorizing party. Payment is a condition of the DSO extension profile, not generic authority over either lifecycle.
 
-Payment is optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. The current iteration defines no transfer protocol or price. Any future payment profile must resolve payer and receiver authorization, pricing, payment-renewal atomicity, replay and idempotency, failure and refunds, finality, concurrency control, privacy, metadata validation, and auditability before adoption.
+CIP-112 may supply an optional, versioned payment adapter, but it is not a complete extension protocol and MUST NOT be treated as one. TODO: select one settlement model: atomic burn with extension, a prepaid capability, or an asynchronous payment and extension flow. The selected profile must define payment-to-request binding, authorization, idempotency and replay handling, failure and compensation, privacy, finality, concurrency, metadata validation, and auditability. This CIP implements no speculative payment code.
 
 #### Deployment Components and Access
 
@@ -453,7 +472,7 @@ The explored composition has these components:
 
 DID resolution locates and identifies the service. It does not replace the Credentials HTTP protocol or establish caller authentication, operation authorization, governance approval, endpoint trustworthiness, or service availability. Those controls remain separate deployment responsibilities. In particular, control of a DID or DID Document does not by itself authorize an entity to operate the DSO Credential Registry; DSO governance must grant that authority independently.
 
-Clients call the discovered Credentials API directly. Explorers can retrieve active records and, when advertised, inactive records or event history through the corresponding standard operations, subject to endpoint exposure, filtering, authentication, authorization, and audience policy. If multiple endpoints are advertised, they provide access to the same logical registry. Their hosting, availability, consistency, and selection rules remain unresolved.
+Clients call the discovered Credentials API directly. Explorers can retrieve active records and, when advertised, inactive records or event history through the corresponding standard operations, subject to endpoint exposure, filtering, authentication, authorization, and audience policy. A completed DSO deployment profile MUST use BFT reads across its declared endpoint set and fail closed when the policy cannot establish an acceptable result. TODO: define fault domains and independence assumptions; quorum size and tolerated faults; response equivalence and canonicalization; freshness and ledger finality; conflict resolution; timeout and partition behavior; and the exact fail-closed result. The profile must also define endpoint selection, DID binding, bootstrap trust, and service-entry versioning. None of these semantics is supplied by `cn-did-standard`.
 
 Scalability is measured for the logical registry. Representative load tests should measure PQS projection growth, API throughput and latency, storage, and operating cost before more complex mechanisms are considered.
 
@@ -555,11 +574,11 @@ This roadmap is non-normative. Candidate future iterations are not current behav
 
 The checked-in [`demo/interface/`](demo/interface/) project contains the candidate Daml interface source used by this CIP. The companion [`demo/model/`](demo/model/) project contains concrete demo templates for credentials and the nonconsuming factory, and [`demo/test/`](demo/test/) contains seed and lifecycle tests. Production governance, registry removal policy, stakeholder visibility, and any authorization beyond the explicit issuer and registry-administrator Parties remain profile-specific.
 
-The non-normative [`demo/`](demo/) is a local PQS-backed reference implementation. It builds the candidate interface, concrete model, and seed/test packages with Daml SDK/DPM 3.5.11 targeting LF 2.2, allocates synthetic parties, submits deterministic credentials through ledger commands, runs Canton 3.5.11 and PQS 3.5.8 with PostgreSQL, and exposes a small Java 21/Quarkus 3.23.2 JDBC API. Canton 3.5.11 supports protocol 35, while the active sandbox configuration leaves protocol selection to the supported runtime default rather than conflating it with LF 2.2. The demo implements active exact lookup and active bulk retrieval for both intrinsic and registered resource families, uses canonical `/v1` paths, and advertises no inactive-record or event-history capability. Run it with `make build`, `make up`, `make daml-test`, `make seed`, and `make smoke-test` from `demo/`.
+The non-normative [`demo/`](demo/) is a local PQS-backed reference implementation. It builds the candidate interface, concrete model, and seed/test packages with Daml SDK/DPM 3.5.11 targeting LF 2.2, allocates synthetic parties, submits deterministic credentials through ledger commands, runs Canton 3.5.11 and PQS 3.5.8 with PostgreSQL, and exposes a small Java 21/Quarkus 3.23.2 JDBC API. Canton 3.5.11 supports protocol 35, while the active sandbox configuration leaves protocol selection to the supported runtime default rather than conflating it with LF 2.2. The demo implements snapshot-scoped active/archived/all exact lookup and bulk retrieval for both intrinsic and registered resource families, uses canonical `/v1` paths, and advertises inactive-record retrieval but no separate event-history capability. Run it with `make build`, `make up`, `make daml-test`, `make seed`, and `make smoke-test` from `demo/`.
 
 The in-process Daml seed/test verifies the 360-credential fixture. A partial live PQS run verified 36 `Credential` and 36 `RegisteredCredential` projections. A fresh full 300+ live validation was blocked by intermittent Canton synchronizer readiness with `PACKAGE_SERVICE_CANNOT_AUTODETECT_SYNCHRONIZER`; the complete 360-record PQS/API path is not claimed as fully live-validated.
 
-The demo uses a deliberately simple authority model, public synthetic data, no production authentication, one sandbox participant, and offset pagination without snapshot consistency. It demonstrates registry behavior and OpenAPI access only; it does not implement DID resolution, DID Document publication, or service-entry verification. It is evidence for the shape of the candidate flow, not a production registry, security profile, endorsement, or resolution of open governance questions. See the [demo README](demo/README.md) for pinned versions, verified limitations, and troubleshooting.
+The demo uses a deliberately simple authority model, public synthetic data, no production authentication, one sandbox participant, snapshot credential pagination, and unsnapshotted registry-list offset pagination. It demonstrates registry behavior and OpenAPI access only; it does not implement DID resolution, DID Document publication, or service-entry verification. It is evidence for the shape of the candidate flow, not a production registry, security profile, endorsement, or resolution of open governance questions. See the [demo README](demo/README.md) for pinned versions, verified limitations, and troubleshooting.
 
 ## References
 
@@ -637,8 +656,8 @@ The current iteration selects `NonEmpty CredentialSubject`, enforcing `1..n` sub
 
 #### Pagination Semantics
 
-- **Resolved for this candidate API:** Bulk retrieval uses bounded, zero-based `page` and `pageSize`, deterministic ordering with a contract-ID tie-breaker, and `hasNext` derived from a `pageSize + 1` query. Offset pagination is not snapshot-consistent; concurrent changes can shift boundaries and produce duplicates or omissions across pages.
-- **Resolved in the local OpenAPI source:** [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) defines credential registry discovery and capabilities, exact lookup, bulk record retrieval, separate event history, default and maximum page sizes, lifecycle scope, supported filters, deterministic ordering, responses, and client errors. It specifies offset pagination without cursor or snapshot guarantees.
+- **Resolved for this candidate API:** Bulk retrieval uses bounded, zero-based `page` and `pageSize`, deterministic ordering with a contract-ID tie-breaker, and `hasNext` derived from a `pageSize + 1` query. Credential pages use a selected snapshot and signed keyset continuation or same-snapshot page jumps. Only registry-list offset pagination permits concurrent page drift.
+- **Resolved in the local OpenAPI source:** [`demo/interface/openapi/credential-registry-v1.yaml`](demo/interface/openapi/credential-registry-v1.yaml) defines credential registry discovery and capabilities, exact lookup, bulk record retrieval, separate event history, default and maximum page sizes, lifecycle scope, supported filters, deterministic ordering, responses, and client errors. It specifies snapshot credential pagination with one continuation token; registry-list pagination retains its original offset contract.
 - **Vladislav Kokosh (Jan 20, 11:59 PM):** Asked for explicit total ordering to avoid ambiguity when records share the same primary sort value.
 - **Simon Meier (Jan 23, 4:48 PM):** Agreed and noted OpenAPI definitions will make this explicit.
 

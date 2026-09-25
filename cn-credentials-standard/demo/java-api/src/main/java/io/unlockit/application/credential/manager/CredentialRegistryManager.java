@@ -16,11 +16,16 @@ public class CredentialRegistryManager {
   static final int DEFAULT_PAGE_SIZE = 50;
   static final int MAX_PAGE_SIZE = 100;
   private static final String API_VERSION = "1.0.0-draft";
-  private static final String[] ACTIVE = {"active"};
-  private static final String[] NO_FILTERS = {};
+  private static final String[] STATES = {"active", "archived", "all"};
+  private static final String[] FILTERS = {"createdFrom", "createdUntil", "archivedFrom", "archivedUntil",
+      "issuer", "holder", "credentialSubjectId", "keyPrefix"};
   private static final CredentialRegistryResponse.FamilyCapabilities CAPABILITIES =
       new CredentialRegistryResponse.FamilyCapabilities(
-          true, false, false, ACTIVE, NO_FILTERS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+          true, true, false, STATES, FILTERS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+  private static final CredentialRegistryResponse.FamilyCapabilities REGISTERED_CAPABILITIES =
+      new CredentialRegistryResponse.FamilyCapabilities(true, true, false, STATES,
+          java.util.stream.Stream.concat(java.util.Arrays.stream(FILTERS), java.util.stream.Stream.of("registryAdmin"))
+              .toArray(String[]::new), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
   private final CredentialQueryClient queryClient;
 
@@ -50,12 +55,11 @@ public class CredentialRegistryManager {
     List<IssuanceFactoryResponse> issuanceFactories =
         factories.stream()
             .sorted(
-                Comparator.comparing(CredentialRegistryFactory::issuer)
-                    .thenComparing(CredentialRegistryFactory::contractId))
-            .map(factory -> new IssuanceFactoryResponse(factory.contractId(), factory.issuer()))
+                Comparator.comparing(CredentialRegistryFactory::contractId))
+            .map(factory -> new IssuanceFactoryResponse(factory.contractId(), factory.anchorers()))
             .toList();
     return new CredentialRegistryResponse(
-        registryId, API_VERSION, CAPABILITIES, CAPABILITIES, issuanceFactories);
+        registryId, API_VERSION, CAPABILITIES, REGISTERED_CAPABILITIES, issuanceFactories);
   }
 
   private static PageRequest pageRequest(String pageValue, String pageSizeValue) {
