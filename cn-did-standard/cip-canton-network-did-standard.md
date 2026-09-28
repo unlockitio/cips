@@ -41,8 +41,8 @@ The System Context elements below identify the people and external systems shown
 
 The standard is decomposed into two layers, presented in dependency order:
 
-1. **Layer 1: DID Document, Control, and Resolution Standard.** This layer covers the DID-to-Canton-Party association, DID Document data model and verification methods, control, creation, update, rotation, recovery, deactivation, authoritative state, and current and historical resolution. A conforming design needs integrity, source authentication, canonical version, freshness, and finality rules. The DID state authority and its visibility boundary must be explicit: maintaining state does not imply universal visibility, and the final design must define which parties can maintain and observe DID-related state.
-2. **Layer 2: Standardized Application and Metadata Discovery.** This layer uses DID Document `service` entries to publish versioned endpoint profiles, capabilities, and routing metadata. It defines how clients discover and select compatible application interfaces and how discovery mechanisms coexist, migrate, and resist downgrade. Resolver and registrar interfaces should interoperate with standards-aligned external tooling without requiring one identity-agent framework or inventing a Canton-specific agent model.
+1. **Layer 1: DID Document, Control, and Resolution Standard.** This layer covers the DID-to-Canton-Party association, DID Document data model and verification methods, control, creation, update, rotation, recovery, deactivation, authoritative state, and current and historical resolution. A conforming design needs integrity, source authentication, canonical version, freshness, and finality rules. The DID state authority and its visibility boundary must be explicit: visibility is scoped to the parties named by the final design for maintaining and observing DID-related state.
+2. **Layer 2: Standardized Application and Metadata Discovery.** This layer uses DID Document `service` entries to publish versioned endpoint profiles, capabilities, and routing metadata. It defines how clients discover and select compatible application interfaces and how discovery mechanisms coexist, migrate, and resist downgrade. Resolver and registrar interfaces should interoperate with standards-aligned external tooling through their supported interface boundaries, independently of any particular identity-agent framework or Canton-specific agent model.
 
 The boundary between on-ledger and off-ledger responsibilities is part of the architecture. A deployment can keep authoritative DID state or binding evidence on-ledger while exposing standards-aligned resolver and registrar interfaces off-ledger, but it must specify the authority, visibility, authentication, version, freshness, and finality properties of that boundary. Credential presentation and cryptographic credential verification occur outside the DID Document and can remain off-ledger. Applications can consume reduced outputs from separate verification or policy processes, but those outputs do not become DID Document or DID resolution semantics.
 
@@ -225,7 +225,7 @@ The choice checks that the result names `expectedRegistryAdmin`. It verifies a k
 
 ##### HTTP Interfaces
 
-The HTTP surface is a resolver and discovery boundary over registry-enabled documents. It does not imply that one registry is authoritative for every `did:canton` DID, make ledger data universally visible, or replace method-specific verification.
+The HTTP surface is a resolver and discovery boundary over registry-enabled documents. Authority remains method-specific rather than network-wide by virtue of a single registry; ledger visibility retains its deployment scope, and clients still perform method-specific verification.
 
 The DID HTTP surface uses a leading API version and a top-level DID collection. A future Layer 2 profile may select the API origin and root; this draft does not define that mechanism. Source, administrator, authority, and evidence remain resolution metadata rather than path components.
 
@@ -271,7 +271,7 @@ Resolver and registrar interoperability remains defined at supported interface b
 
 #### Visibility and Publication Boundaries
 
-The DID state authority and deployment profile must define which parties can maintain and observe DID-related state. Publication of a DID Document can make its controllers, verification methods, services, and operational relationships visible; authoritative maintenance does not imply universal visibility, and an off-ledger interface does not change the underlying authority or publication boundary.
+The DID state authority and deployment profile must define which parties can maintain and observe DID-related state. Publication of a DID Document can make its controllers, verification methods, services, and operational relationships visible; visibility remains scoped by the publication boundary, while an off-ledger interface preserves the underlying authority and publication boundary.
 
 #### Security Considerations
 
