@@ -1,0 +1,5 @@
+ARG PQS_IMAGE=europe-docker.pkg.dev/da-images/public/docker/participant-query-store@sha256:5ece6a0b4af6516cc5be05405c22e8713396cd3a8216d7c5bc73d63b7eef499f
+FROM busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23 AS healthcheck
+
+FROM ${PQS_IMAGE}
+COPY --from=healthcheck /bin/busybox /busybox

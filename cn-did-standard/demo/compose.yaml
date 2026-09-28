@@ -96,7 +96,11 @@ services:
     restart: "no"
 
   did-pqs:
-    image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.5.8
+    build:
+      context: .
+      dockerfile: Dockerfile.pqs
+      args:
+        PQS_IMAGE: europe-docker.pkg.dev/da-images/public/docker/participant-query-store@sha256:5ece6a0b4af6516cc5be05405c22e8713396cd3a8216d7c5bc73d63b7eef499f
     command: ["pipeline", "ledger", "postgres-document"]
     environment:
       SCRIBE_SOURCE_LEDGER_HOST: did-canton
@@ -119,8 +123,6 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
-    volumes:
-      - ./tools/busybox:/busybox:ro
     depends_on:
       did-postgres:
         condition: service_healthy
