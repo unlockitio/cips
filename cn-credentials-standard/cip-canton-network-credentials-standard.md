@@ -258,19 +258,20 @@ The registration view carries the administering Party, registration time, option
 | --- | --- | --- | --- | --- |
 | `RegisteredCredential_PublicFetch` | `expectedRegistryAdmin : Party`; `actor : Party` | `actor` | `RegisteredCredentialView` | Nonconsuming fetch that requires the returned `registryAdmin` to equal `expectedRegistryAdmin`. |
 
-`RegisteredCredentialLifecycle` owns registered renewal and requires `RegisteredCredential`, `CredentialLifecycle`, and `Credential`. The final `Credential` is conceptually implied by both parent interfaces but is declared because Daml requires the full transitive interface requirement closure.
+`RegisteredCredentialLifecycle` offers separate intrinsic renewal of a registered credential and registry-only registration extension. It requires `RegisteredCredential`, `CredentialLifecycle`, and `Credential`; the final `Credential` is conceptually implied by both parent interfaces but is declared because Daml requires the full transitive interface requirement closure. The candidate `ExtendRegistration` choice is separate from `Renew`, which now advances only intrinsic validity; the old combined behavior is not retained. Adding an interface method changes the package ID, so the demo increments the interface DAR from 0.1.0 to 0.2.0. Consumers must rebuild and vet the changed DAR; the `V1` module name is not a binary-compatibility promise.
 
 **Table 7. `RegisteredCredentialLifecycle` choices**
 
 | Choice | Input | Controller | Result | Behavior |
 | --- | --- | --- | --- | --- |
-| `RegisteredCredentialLifecycle_Renew` | Profile-defined renewal request, exact current credential view, and registry authorization | Unresolved; current anchorers plus `registryAdmin` is a candidate only | `RegisteredCredentialLifecycle_RenewResult` | Candidate adapter for an atomically coordinated intrinsic renewal and registration extension. It is not required for either lifecycle, and its authority and payment semantics remain unresolved. |
+| `RegisteredCredentialLifecycle_Renew` | Exact current credential view, `registryAdmin`, later `validUntil`; legacy optional profile authorization and payment-evidence fields are not evaluated | Candidate: stable deduplicated anchorers plus registry admin; final policy unresolved | `RegisteredCredentialLifecycle_RenewResult` | Consumes and replaces the registered contract, changing only intrinsic `validUntil`. Registration, including `expiresAt`, remains unchanged; registry authority is required to preserve its continuity. No payment processing is implemented. |
+| `RegisteredCredentialLifecycle_ExtendRegistration` | Exact current credential view, `registryAdmin`, later `expiresAt` | Candidate: stable deduplicated anchorers plus registry admin; final policy unresolved | `RegisteredCredentialLifecycle_ExtendRegistrationResult` | Consumes and replaces the registered contract, retaining the entire credential view and all registration fields except `expiresAt`. A future DSO payment adapter is separate and unimplemented. |
 
-Intrinsic credential lifecycle is registry-independent. Registration is optional, and intrinsic issuance, renewal, expiry, or archival neither requires nor implies registration, registration continuation, or a registry mutation. Conversely, registration retention does not extend, revive, or otherwise alter the credential. Implementations may keep the two lifecycles independent, expose them as separate operations, coordinate them atomically when a profile defines the required authority, or orchestrate them as multiple steps with explicit partial-failure handling. An optional capability MUST NOT mandate any deployment topology.
+Intrinsic credential lifecycle is registry-independent. Registration is optional, and intrinsic issuance, renewal, expiry, or archival neither requires nor implies registration, registration continuation, or a registry mutation. Conversely, registration retention does not extend, revive, or otherwise alter the credential. A concrete contract implementing both interfaces cannot silently carry forward registration through anchorer-only intrinsic renewal. The reference demo rejects `CredentialLifecycle_Renew` on its registered template; `RegisteredCredentialLifecycle_Renew` changes only intrinsic validity while explicitly requiring registry authorization to preserve registration. Implementations may expose the lifecycles separately, coordinate them atomically when a profile defines the required authority, or orchestrate them as multiple steps with explicit partial-failure handling. An optional capability MUST NOT mandate any deployment topology.
 
-Any operation that creates, extends, removes, or otherwise changes registration MUST have registry authorization. Renewal authority itself remains unresolved: authorization by the current credential anchorers together with `registryAdmin` is a candidate only, and a payer MAY be a different party. Payment evidence is an optional condition of a selected profile; intrinsic renewal and registration mutation still require their respective authorizations.
+Any operation that creates, extends, removes, or otherwise changes or continues registration MUST have registry authorization. The candidate demo uses current anchorers plus `registryAdmin` as controllers for each consuming replacement and retains the anchorer-and-holder signatories. Daml tests show that an admin-only consuming choice can create that signed successor through its authorized choice body: the ledger's create node carries the signatories, even though only the admin submitted. Observer status alone is not choice authority; the choice explicitly names the admin as controller. The demo's joint-controller requirement is a conservative candidate for authorizing registration continuity, not a Daml necessity or final DSO policy. Renewal and extension authority remain unresolved, and a payer MAY be a different party. Payment is an unimplemented condition of a future DSO extension profile, not generic authority over either lifecycle.
 
-The interface below is therefore candidate material rather than a completed generic renewal contract. Before standardization, the choice shape, controllers, independent time inputs, and failure semantics MUST be revised to match a selected profile. Callers MUST obtain `expectedRegistryAdmin` from a trusted source. Implementations MUST validate it against the view. Package vetting and registry-provider security review remain necessary.
+The interface below is candidate material rather than a completed generic lifecycle contract. Before standardization, the controllers, policy hooks, payment binding, and failure semantics MUST be reviewed for the selected profile. Callers MUST obtain `registryAdmin` from a trusted source, and implementations MUST validate it against the view and verify the entire expected credential against the current contract. Package vetting and registry-provider security review remain necessary.
 
 ```daml
 -- Candidate; sourced from demo/interface/daml/Canton/Network/Credentials/V1.daml.
@@ -300,6 +301,10 @@ data RegisteredCredentialLifecycle_RenewResult = RegisteredCredentialLifecycle_R
   replacementCredential : ContractId RegisteredCredentialLifecycle
   deriving (Eq, Show)
 
+data RegisteredCredentialLifecycle_ExtendRegistrationResult = RegisteredCredentialLifecycle_ExtendRegistrationResult with
+  replacementCredential : ContractId RegisteredCredentialLifecycle
+  deriving (Eq, Show)
+
 interface RegisteredCredentialLifecycle requires RegisteredCredential, CredentialLifecycle, Credential where
   viewtype RegisteredCredentialView
 
@@ -312,17 +317,29 @@ interface RegisteredCredentialLifecycle requires RegisteredCredential, Credentia
       validUntil : Time
       profileAuthorization : Optional (TextMap Api.Token.MetadataV1.AnyValue)
       paymentEvidence : Optional (TextMap Api.Token.MetadataV1.AnyValue)
-    controller (toList expectedCredential.anchorers), registryAdmin
+    controller (stableParties (toList expectedCredential.anchorers <> [registryAdmin]))
     do
       assertMsg "renewal requires an existing validUntil" (expectedCredential.validUntil /= None)
       assertMsg "renewal validUntil must be strictly later" (Some validUntil > expectedCredential.validUntil)
       assertMsg "party is not the registry administrator" (registryAdmin == (view this).registryAdmin)
-      assertMsg "renewal requires an existing expiresAt" ((view this).expiresAt /= None)
-      assertMsg "renewal expiresAt must be strictly later" (Some validUntil > (view this).expiresAt)
       registeredCredentialLifecycle_renewImpl this self arg
+
+  registeredCredentialLifecycle_extendRegistrationImpl : ContractId RegisteredCredentialLifecycle -> RegisteredCredentialLifecycle_ExtendRegistration -> Update RegisteredCredentialLifecycle_ExtendRegistrationResult
+
+  choice RegisteredCredentialLifecycle_ExtendRegistration : RegisteredCredentialLifecycle_ExtendRegistrationResult
+    with
+      expectedCredential : CredentialView
+      registryAdmin : Party
+      expiresAt : Time
+    controller (stableParties (toList expectedCredential.anchorers <> [registryAdmin]))
+    do
+      assertMsg "party is not the registry administrator" (registryAdmin == (view this).registryAdmin)
+      assertMsg "extension requires an existing expiresAt" ((view this).expiresAt /= None)
+      assertMsg "extension expiresAt must be strictly later" (Some expiresAt > (view this).expiresAt)
+      registeredCredentialLifecycle_extendRegistrationImpl this self arg
 ```
 
-`CredentialView.validUntil` remains intrinsic validity and `RegisteredCredentialView.expiresAt` remains registry retention. Generic clients MUST keep them distinct. The DSO profile requires equality where both are present and requires `RegisteredCredentialLifecycle_Renew` to update both atomically to the same strictly later value. A concrete registered credential MAY also implement `CredentialLifecycle`; that independent capability is not required by `RegisteredCredential`.
+`CredentialView.validUntil` remains intrinsic validity and `RegisteredCredentialView.expiresAt` remains registry retention, including in the DSO profile. Neither is required to exist when the other does, and they need not be equal or advance together. A concrete registered credential MAY also implement `CredentialLifecycle`; that capability is not required by `RegisteredCredential`, and any consuming intrinsic renewal on a registered template MUST NOT silently continue registration without registry authorization.
 
 When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfAsHolder` MUST preserve registration continuity. The four registration fields MUST be copied unchanged, and contract-ID references MUST be updated atomically in the same transaction. The generic result remains `ContractId Credential`; an implementation MUST NOT add a second registered self-removal choice that conflicts with or bypasses the base choice.
 
@@ -343,7 +360,7 @@ When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfA
 | --- | --- | --- | --- |
 | `CredentialRegistryFactory_Issue` | Stable deduplicated anchorers plus holders | The credential anchorers and registration administrator MUST match the factory authority; all proposed signatories authorize creation. Textual issuers are supported. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
 
-`CredentialRegistryFactory_Issue` is nonconsuming, so the factory remains available after issuance. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, and standalone retention updates are non-normative roadmap topics. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
+`CredentialRegistryFactory_Issue` is nonconsuming, so the factory remains available after issuance. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, and deregistration are non-normative roadmap topics. The candidate `RegisteredCredentialLifecycle_ExtendRegistration` changes only registry retention on a registered concrete contract; general standalone retention updates beyond that candidate are not standardized. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
 
 #### HTTP Interfaces
 
@@ -411,25 +428,26 @@ Event-history pagination follows the same bounds and look-ahead rule but uses th
 
 #### Credential Lifecycle
 
-The normative lifecycle model contains exactly `CredentialRegistryFactory_Issue`, `CredentialLifecycle_Renew`, and `RegisteredCredentialLifecycle_Renew`. `CredentialView.validUntil` defines intrinsic expiry. Natural passage beyond it changes usability as a time-derived condition, independently of ledger transactions. `RegisteredCredentialView.expiresAt` defines registry retention and remains a distinct field.
+The lifecycle reference includes `CredentialRegistryFactory_Issue`, `CredentialLifecycle_Renew`, `RegisteredCredentialLifecycle_Renew`, and `RegisteredCredentialLifecycle_ExtendRegistration`. The latter two are candidate registered-template choices, not final DSO authorization or payment policy. `CredentialView.validUntil` defines intrinsic expiry. Natural passage beyond it changes usability as a time-derived condition, independently of ledger transactions or archival. `RegisteredCredentialView.expiresAt` defines independent registry retention.
 
-![Credential lifecycle showing initial issuance, intrinsic renewal, atomic registered renewal, holder self-removal, and all-holder archival.](images/credentials-lifecycle.png)
+![Credential lifecycle showing initial issuance, separate intrinsic renewal and registration extension, holder self-removal, and all-holder archival.](images/credentials-lifecycle.png)
 
 *Simplified lifecycle view. [PlantUML source](images/credentials-lifecycle.puml).*
 
-**Table 10. Normative lifecycle transitions**
+**Table 10. Lifecycle transitions (registered renewal and extension use candidate authority)**
 
 | Current state | Operation | Next state | Required authority | Required semantics |
 | --- | --- | --- | --- | --- |
 | No credential | `CredentialRegistryFactory_Issue` | One registered credential | Configured anchorers plus holders | Creates one canonical registered credential. |
-| Credential with finite `validUntil` | `CredentialLifecycle_Renew` | Replacement credential | Unresolved; current anchorers are a candidate | Requested `validUntil` MUST be strictly later. The old contract is consumed and exactly one replacement is created atomically, preserving other fields. Registration is unchanged and need not continue. |
-| Registered credential | Profile-defined registration extension | Replacement registration view | Registry authorization; payment MAY be an additional condition | A new `expiresAt` affects registration only. It MUST NOT alter or revive the credential or require equality with `validUntil`. |
+| Credential with finite `validUntil` | `CredentialLifecycle_Renew` | Replacement credential | Unresolved; current anchorers are a candidate for unregistered credentials | Requested `validUntil` MUST be strictly later. The old contract is consumed and one replacement is created, preserving other credential fields. The demo rejects this choice on registered credentials so it cannot silently continue registration. |
+| Registered credential with finite `validUntil` | Candidate `RegisteredCredentialLifecycle_Renew` | Replacement registered credential | Candidate: current anchorers plus registry admin; final policy unresolved | Changes only `validUntil`, preserving registration and every other credential field. Registry authorization permits continuation of the unchanged registration. `expiresAt` may be absent. |
+| Registered credential with finite `expiresAt` | Candidate `RegisteredCredentialLifecycle_ExtendRegistration` | Replacement registered credential | Candidate: current anchorers plus registry admin; final policy unresolved | Changes only `expiresAt`, preserving the entire credential view and every other registration field. `validUntil` may be absent. The DSO paid extension requires a future payment adapter, not provided by this demo. |
 | Credential and registration selected for coordinated change | Optional profile adapter or orchestrator | Profile-defined results | Both intrinsic and registry authorities | May coordinate independent operations atomically or orchestrate separate operations, with topology and failure semantics declared by the profile. |
 | Any credential | Natural passage beyond `validUntil` | Derived expired usability | None | Time alone determines expiry; the contract and registration remain unchanged. |
 
-`CredentialLifecycle` is optional and requires `Credential`. `RegisteredCredential` is registration-only and requires `Credential`, so lifecycle support is not mandatory on registration. `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` are independent and MUST NOT be required to exist together or be equal. A registration may outlive an intrinsically expired credential for retention or audit purposes, but cannot make it valid. An intrinsic credential may remain valid after registration expires or is removed. `RegisteredCredentialLifecycle` is an optional coordination candidate; its presence MUST NOT couple the lifecycles or prescribe whether components are colocated, separate, atomically coordinated, or orchestrated.
+`CredentialLifecycle` is optional and requires `Credential`. `RegisteredCredential` is registration-only and requires `Credential`, so lifecycle support is not mandatory on registration. `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` are independent and MUST NOT be required to exist together, be equal, or advance together, including in the DSO profile. A registration may outlive an intrinsically expired credential for retention or audit purposes, but cannot make it valid. An intrinsic credential may remain valid after registration expires or is removed. `RegisteredCredentialLifecycle` is an optional candidate for separately authorized operations; its presence MUST NOT couple the dates or prescribe whether components are colocated, separate, atomically coordinated, or orchestrated.
 
-The generic model keeps intrinsic validity and registry retention separate. The DSO profile requires `validUntil == expiresAt` where both are present and renews both atomically. Payment MAY be an additional profile-specific condition for `RegisteredCredentialLifecycle_Renew`; the generic interface's renewal authority remains unresolved.
+The DSO paid extension changes only registry retention. Its payment protocol and final authorization are unresolved and not implemented by the generic Daml choice or the demo. `RegisteredCredentialLifecycle_Renew` changes only intrinsic validity with registry authorization to keep the existing registration, not to extend it; its final authority remains unresolved.
 
 Holder relinquishment and all-holder archival remain distinct `Credential` operations. Relinquishment removes only the exercising holder and replaces the contract while preserving validity and registration. All-holder archival is terminal and consumes the canonical credential. A removed holder loses future stakeholder visibility according to concrete stakeholder behavior, but previously observed ledger data cannot be erased.
 
@@ -459,7 +477,7 @@ The registry item returned by `GET /v1/credential-registries/{registryId}` adver
 
 The DSO profile keeps intrinsic validity and registry retention independent. `CredentialView.validUntil` and `RegisteredCredentialView.expiresAt` are never required to be equal. By default, initial registration requires no CC payment and registration `expiresAt` is set within 90 days, configurable by SV voting; this default does not constrain intrinsic credential validity.
 
-A concrete DSO paid extension changes only `RegisteredCredentialView.expiresAt`. It requires registry authorization and MUST NOT change `CredentialView.validUntil`, renew or revive an expired credential, alter credential claims, or imply continued registration after a separate intrinsic renewal. Renewal authority remains unresolved. Current anchorers plus `registryAdmin` is a candidate authorization set only; the payer MAY differ from every authorizing party. Payment is a condition of the DSO extension profile, not generic authority over either lifecycle.
+A concrete DSO paid extension changes only `RegisteredCredentialView.expiresAt`. It requires registry authorization and MUST NOT change `CredentialView.validUntil`, renew or revive an expired credential, alter credential claims, or imply continued registration after a separate intrinsic renewal. Final intrinsic renewal and registry extension authorities remain unresolved. The demo uses current anchorers plus `registryAdmin` solely as a candidate policy for consuming replacement, not because Daml requires both as controllers; the payer MAY differ from every authorizing party. Payment is a condition of the DSO extension profile, not generic authority over either lifecycle, and is not processed by the demo.
 
 CIP-112 may supply an optional, versioned payment adapter, but it is not a complete extension protocol and MUST NOT be treated as one. TODO: select one settlement model: atomic burn with extension, a prepaid capability, or an asynchronous payment and extension flow. The selected profile must define payment-to-request binding, authorization, idempotency and replay handling, failure and compensation, privacy, finality, concurrency, metadata validation, and auditability. This CIP implements no speculative payment code.
 
@@ -569,9 +587,9 @@ This roadmap is non-normative. Candidate future iterations are not current behav
 * **Candidate future scaling and partitioning:** may evaluate registry partitions, namespace assignment, migration, routing history, and replication or consistency models. Any such model requires a future specification and must define its correctness and operational boundaries.
 * **Candidate future delegated operation:** may evaluate Validator-operated infrastructure, delegation and authorization, incentives, accountability, and operational requirements. Evaluation does not imply adoption; delegated operation requires a future specification.
 * **Candidate future access and routing evolution:** may evaluate Scan integration, proxies, route selection, multiple endpoints, high availability, and BFT reads. These are possible designs rather than current requirements and require a future specification.
-* **Candidate future lifecycle extensions:** may define general reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, standalone retention updates, status-list integration, detailed lineage or version state, history contracts, reason vocabularies, or mandatory lifecycle-on-registration. None is current normative behavior. Future work must preserve the distinction between intrinsic validity, registry retention, renewal, and holder operations.
+* **Candidate future lifecycle extensions:** may define general reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, deregistration, registration updates beyond the candidate extension choice, status-list integration, detailed lineage or version state, history contracts, reason vocabularies, or mandatory lifecycle-on-registration. None is current normative behavior. Future work must preserve the distinction between intrinsic validity, registry retention, renewal, and holder operations.
 * **Candidate future holder and registry extensions:** may define separate holder-association contracts, registry-removal semantics, or private encrypted holder storage without bypassing the standardized holder choices.
-* **Candidate future payment profile:** may use a TSv1 transfer compatibility pattern as optional profile-specific authorization for `RegisteredCredentialLifecycle_Renew`. A future specification MUST resolve target and payer authorization, receiver, asset and pricing, atomicity with renewal, replay and idempotency, failure and refund behavior, finality, concurrency control, privacy, metadata validation, auditability, and exact Daml and API integration. No payment protocol or receiver/memo convention is adopted here.
+* **Candidate future payment profile:** may use a TSv1 transfer compatibility pattern for the DSO registration extension via `RegisteredCredentialLifecycle_ExtendRegistration`. A future specification MUST resolve target and payer authorization, receiver, asset and pricing, atomicity with extension, replay and idempotency, failure and refund behavior, finality, concurrency control, privacy, metadata validation, auditability, and exact Daml and API integration. No payment protocol or receiver/memo convention is adopted here.
 * **Other deferred work:** includes a full W3C VC profile or Canton DID method, completion of the DSO DID composition, and complete issuance, presentation, and selective-disclosure protocols.
 
 ## Reference Implementation

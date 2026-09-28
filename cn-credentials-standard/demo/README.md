@@ -8,7 +8,7 @@ The Canton Open Source 3.5.11 container is a minimal local Canton synchronizer: 
 
 The `interface`, `model`, and `test` packages use DPM/Daml SDK 3.5.11 and Daml-LF 2.2. The artifact image contains exactly:
 
-- `canton-network-credentials-interfaces-0.1.0.dar`
+- `canton-network-credentials-interfaces-0.2.0.dar`
 - `canton-network-credentials-demo-0.1.0.dar`
 - `canton-network-credentials-demo-scripts-0.1.0.dar`
 
