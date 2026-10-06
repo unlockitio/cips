@@ -3,7 +3,7 @@
   Layer: Daml
   Title: Canton Network Credentials Standard
   Author:
-    Simon Meier
+    Luís Marado (inspired by Simon Meier's CIP Draft #204)
   License: CC0-1.0
   Status: Early Draft (comment threads at the bottom of this doc, and inlined TODO notes)
   Type: Standards Track

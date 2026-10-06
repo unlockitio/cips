@@ -1,7 +1,7 @@
 CIP: CIP TBD
 Layer: Daml
 Title: Canton Network DID Standard
-Author:
+Author: Luís Marado
 License: CC0-1.0
 Status: Early Draft
 Type: Standards Track
