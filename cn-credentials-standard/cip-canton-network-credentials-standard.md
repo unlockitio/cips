@@ -345,7 +345,7 @@ When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfA
 
 ##### Credential Registry Factory Interface
 
-`CredentialRegistryFactory` provides the generic initial-issuance entry point for creating a registered credential. Its view identifies the registry administrator and the nonempty anchorer list authorized to anchor credentials through that factory.
+`CredentialRegistryFactory` provides two generic entry points for creating a registered credential: Party-authorized issuance and anchoring of a credential with an external textual issuer. Its view identifies the registry administrator and the nonempty anchorer list authorized to anchor credentials through that factory.
 
 **Table 7. `CredentialRegistryFactoryView` fields**
 
@@ -358,9 +358,10 @@ When an implementation is also a `RegisteredCredential`, `Credential_RemoveSelfA
 
 | Choice | Controller | Inputs and preconditions | Result |
 | --- | --- | --- | --- |
-| `CredentialRegistryFactory_Issue` | Stable deduplicated anchorers plus holders | The credential anchorers and registration administrator MUST match the factory authority; all proposed signatories authorize creation. Textual issuers are supported. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
+| `CredentialRegistryFactory_Issue` | Stable deduplicated anchorers plus holders plus the issuer Party | The issuer MUST be `W3C_VC_Identifier_Party`; the credential anchorers and registration administrator MUST match the factory authority. The issuer Party and all proposed signatories authorize creation. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
+| `CredentialRegistryFactory_Anchor` | Stable deduplicated anchorers plus holders | The issuer MUST be `W3C_VC_Identifier Text`; the credential anchorers and registration administrator MUST match the factory authority. The proposed signatories authorize creation, without issuer authorization. | Creates one registered credential and returns its `ContractId RegisteredCredential`. |
 
-`CredentialRegistryFactory_Issue` is nonconsuming, so the factory remains available after issuance. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, and deregistration are non-normative roadmap topics. The candidate `RegisteredCredentialLifecycle_ExtendRegistration` changes only registry retention on a registered concrete contract; general standalone retention updates beyond that candidate are not standardized. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
+Both choices are nonconsuming, so the factory remains available after either operation. They are separate because an external textual issuer cannot authorize a Daml choice. Anchoring attests on-ledger custody and publication by the anchorers only; it proves neither the external issuer's signature nor the truth of the claims. A Party issuer MUST use `CredentialRegistryFactory_Issue` and MUST NOT bypass its authorization through `CredentialRegistryFactory_Anchor`. The generic factory defines no other lifecycle mutation. Reissue with changed claims, suspension, resumption, revocation, explicit early expiry, refresh, and deregistration are non-normative roadmap topics. The candidate `RegisteredCredentialLifecycle_ExtendRegistration` changes only registry retention on a registered concrete contract; general standalone retention updates beyond that candidate are not standardized. The local OpenAPI remains a read contract and does not standardize mutation endpoints for the Daml choices.
 
 #### HTTP Interfaces
 
