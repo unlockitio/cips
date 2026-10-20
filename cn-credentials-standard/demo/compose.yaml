@@ -3,6 +3,7 @@ name: cn-credential-demo
 
 services:
   credential-artifacts:
+    mem_limit: ${CREDENTIAL_ARTIFACTS_MEM_LIMIT:-128m}
     build:
       context: ../..
       dockerfile: cn-credentials-standard/Dockerfile.daml
@@ -20,6 +21,7 @@ services:
     restart: "no"
 
   credential-postgres:
+    mem_limit: ${CREDENTIAL_POSTGRES_MEM_LIMIT:-512m}
     image: postgres:18.6-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pqs}
@@ -38,6 +40,7 @@ services:
       - credential-network
 
   credential-canton:
+    mem_limit: ${CREDENTIAL_CANTON_MEM_LIMIT:-3g}
     build:
       context: ..
       dockerfile: Dockerfile.canton
@@ -53,6 +56,7 @@ services:
       - credential-network
 
   credential-dar-upload:
+    mem_limit: ${CREDENTIAL_DAR_UPLOAD_MEM_LIMIT:-256m}
     build:
       context: ../..
       dockerfile: cn-credentials-standard/Dockerfile.daml
@@ -75,6 +79,7 @@ services:
     restart: "no"
 
   credential-seed:
+    mem_limit: ${CREDENTIAL_SEED_MEM_LIMIT:-768m}
     build:
       context: ../..
       dockerfile: cn-credentials-standard/Dockerfile.daml
@@ -97,6 +102,7 @@ services:
     restart: "no"
 
   credential-pqs:
+    mem_limit: ${CREDENTIAL_PQS_MEM_LIMIT:-768m}
     image: europe-docker.pkg.dev/da-images/public/docker/participant-query-store:3.5.8
     command: ["pipeline", "ledger", "postgres-document"]
     environment:
@@ -133,6 +139,7 @@ services:
       - credential-network
 
   credential-projection-waiter:
+    mem_limit: ${CREDENTIAL_PROJECTION_WAITER_MEM_LIMIT:-128m}
     image: postgres:18.6-alpine
     entrypoint: ["/workspace/scripts/wait-for-projections.sh"]
     environment:
@@ -155,6 +162,7 @@ services:
     restart: "no"
 
   did-artifacts:
+    mem_limit: ${DID_ARTIFACTS_MEM_LIMIT:-128m}
     build:
       context: ../..
       dockerfile: cn-did-standard/Dockerfile.daml
@@ -172,6 +180,7 @@ services:
     restart: "no"
 
   did-dar-upload:
+    mem_limit: ${DID_DAR_UPLOAD_MEM_LIMIT:-256m}
     build:
       context: ../..
       dockerfile: cn-did-standard/Dockerfile.daml
@@ -194,6 +203,7 @@ services:
     restart: "no"
 
   did-seed:
+    mem_limit: ${DID_SEED_MEM_LIMIT:-768m}
     build:
       context: ../..
       dockerfile: cn-did-standard/Dockerfile.daml
@@ -221,8 +231,10 @@ services:
     restart: "no"
 
   credential-api-1: &credential-api
+    mem_limit: ${CREDENTIAL_API_MEM_LIMIT:-256m}
     build: ./java-api
     environment: &credential-api-environment
+      JAVA_TOOL_OPTIONS: ${CREDENTIAL_API_JAVA_TOOL_OPTIONS:--Xmx160m}
       CREDENTIALS_HTTP_PORT: "8080"
       CREDENTIALS_PAGINATION_SECRET: ${CREDENTIALS_PAGINATION_SECRET:-local-demo-credentials-secret-change-before-deployment}
       CREDENTIALS_PAGINATION_TTL_SECONDS: ${CREDENTIALS_PAGINATION_TTL_SECONDS:-900}
@@ -272,6 +284,7 @@ services:
   # DID projections of that same shared database, so it also needs did-seed to have
   # written its contracts to the participant the single pipeline already follows.
   did-projection-waiter:
+    mem_limit: ${DID_PROJECTION_WAITER_MEM_LIMIT:-128m}
     image: postgres:18.6-alpine
     entrypoint: ["/workspace/scripts/wait-for-projections.sh"]
     environment:
@@ -296,8 +309,10 @@ services:
     restart: "no"
 
   did-api-1: &did-api
+    mem_limit: ${DID_API_MEM_LIMIT:-256m}
     build: ../../cn-did-standard/demo/java-api
     environment: &did-api-environment
+      JAVA_TOOL_OPTIONS: ${DID_API_JAVA_TOOL_OPTIONS:--Xmx160m}
       DID_HTTP_PORT: "8080"
       DID_LISTING_HMAC_SECRET: ${DID_LISTING_HMAC_SECRET:-local-demo-only-hmac-secret-change-before-deployment}
       DID_LISTING_TOKEN_TTL_SECONDS: ${DID_LISTING_TOKEN_TTL_SECONDS:-900}
@@ -349,8 +364,10 @@ services:
       - "${DID_API_4_PORT:-42006}:8080"
 
   credential-bft-reader-api:
+    mem_limit: ${CREDENTIAL_BFT_READER_MEM_LIMIT:-256m}
     build: ./bft-reader/java-api
     environment:
+      JAVA_TOOL_OPTIONS: ${CREDENTIAL_BFT_READER_JAVA_TOOL_OPTIONS:--Xmx160m}
       CREDENTIAL_BFT_HTTP_PORT: "8080"
       CREDENTIAL_BFT_ORIGINS: http://credential-api-1:8080,http://credential-api-2:8080,http://credential-api-3:8080,http://credential-api-4:8080
     depends_on:
@@ -373,8 +390,10 @@ services:
       - credential-network
 
   bft-reader-api:
+    mem_limit: ${DID_BFT_READER_MEM_LIMIT:-256m}
     build: ../../cn-did-standard/demo/bft-reader/java-api
     environment:
+      JAVA_TOOL_OPTIONS: ${DID_BFT_READER_JAVA_TOOL_OPTIONS:--Xmx160m}
       BFT_READER_HTTP_PORT: "8080"
       BFT_DID_REGISTRY_URL: http://did-api-1:8080/v1/dids/dso
       BFT_ORIGIN_MAP: localhost:42003=http://did-api-1:8080,localhost:42004=http://did-api-2:8080,localhost:42005=http://did-api-3:8080,localhost:42006=http://did-api-4:8080
