@@ -13,6 +13,7 @@ log/
 
 # Java build output
 java-api/target/
+bft-reader/java-api/target/
 
 # IDE and operating-system files
 .idea/

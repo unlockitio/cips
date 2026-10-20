@@ -1,4 +1,5 @@
 name: cn-credential-demo
+# Default Credentials and DID demo: one Canton participant and synchronizer.
 
 services:
   credential-artifacts:
@@ -140,7 +141,7 @@ services:
       PGDATABASE: ${POSTGRES_DB:-pqs}
       PGUSER: ${POSTGRES_USER:-pqs}
       PGPASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
-      CREDENTIAL_SEED_COUNT: ${CREDENTIAL_SEED_COUNT:-360}
+      CREDENTIAL_SEED_COUNT: ${CREDENTIAL_SEED_COUNT:-368}
       PROJECTION_TIMEOUT_SECONDS: ${PROJECTION_TIMEOUT_SECONDS:-300}
     volumes:
       - ./scripts:/workspace/scripts:ro
@@ -153,12 +154,80 @@ services:
       - credential-network
     restart: "no"
 
-  credential-api:
-    build: ./java-api
+  did-artifacts:
+    build:
+      context: ../..
+      dockerfile: cn-did-standard/Dockerfile.daml
+      target: artifacts
+    entrypoint: ["/bin/cp"]
+    command:
+      - /artifacts/canton-network-did-interfaces-0.1.0.dar
+      - /artifacts/canton-network-did-demo-0.1.0.dar
+      - /artifacts/canton-network-did-demo-scripts-0.1.0.dar
+      - /out/
+    volumes:
+      - did-artifacts:/out
+    networks:
+      - credential-network
+    restart: "no"
+
+  did-dar-upload:
+    build:
+      context: ../..
+      dockerfile: cn-did-standard/Dockerfile.daml
+      target: tools
+    working_dir: /workspace
+    command: ["/workspace/scripts/upload-dars.sh"]
     environment:
+      JSON_API_URL: http://credential-canton:7575
+      UPLOAD_TIMEOUT_SECONDS: ${UPLOAD_TIMEOUT_SECONDS:-240}
+    volumes:
+      - did-artifacts:/artifacts:ro
+      - ../../cn-did-standard/demo/scripts:/workspace/scripts:ro
+    depends_on:
+      did-artifacts:
+        condition: service_completed_successfully
+      credential-canton:
+        condition: service_healthy
+    networks:
+      - credential-network
+    restart: "no"
+
+  did-seed:
+    build:
+      context: ../..
+      dockerfile: cn-did-standard/Dockerfile.daml
+      target: tools
+    working_dir: /workspace
+    command: ["/workspace/scripts/seed.sh"]
+    environment:
+      LEDGER_HOST: credential-canton
+      LEDGER_PORT: "6865"
+      JSON_API_URL: http://credential-canton:7575
+      READINESS_SYNCHRONIZER: credential-synchronizer
+      REQUIRE_SHARED_ALICE: "true"
+      SEED_TIMEOUT_SECONDS: ${SEED_TIMEOUT_SECONDS:-300}
+      READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-600}
+    volumes:
+      - did-artifacts:/artifacts:ro
+      - ../../cn-did-standard/demo/scripts:/workspace/scripts:ro
+    depends_on:
+      did-dar-upload:
+        condition: service_completed_successfully
+      credential-seed:
+        condition: service_completed_successfully
+    networks:
+      - credential-network
+    restart: "no"
+
+  credential-api-1: &credential-api
+    build: ./java-api
+    environment: &credential-api-environment
       CREDENTIALS_HTTP_PORT: "8080"
       CREDENTIALS_PAGINATION_SECRET: ${CREDENTIALS_PAGINATION_SECRET:-local-demo-credentials-secret-change-before-deployment}
       CREDENTIALS_PAGINATION_TTL_SECONDS: ${CREDENTIALS_PAGINATION_TTL_SECONDS:-900}
+      CREDENTIALS_NETWORK: ${CREDENTIALS_NETWORK:-localnet}
+      CREDENTIALS_DID_ASSERTIONS_URL: ${CREDENTIALS_DID_ASSERTIONS_URL:-http://did-api-1:8080/v1/demo-name-assertions}
       PQS_JDBC_URL: jdbc:postgresql://credential-postgres:5432/${POSTGRES_DB:-pqs}
       PQS_DB_USER: ${POSTGRES_USER:-pqs}
       PQS_DB_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
@@ -175,9 +244,167 @@ services:
     networks:
       - credential-network
 
+  credential-api-2:
+    <<: *credential-api
+    environment:
+      <<: *credential-api-environment
+      CREDENTIALS_DID_ASSERTIONS_URL: http://did-api-2:8080/v1/demo-name-assertions
+    ports:
+      - "${CREDENTIALS_API_2_PORT:-41004}:8080"
+
+  credential-api-3:
+    <<: *credential-api
+    environment:
+      <<: *credential-api-environment
+      CREDENTIALS_DID_ASSERTIONS_URL: http://did-api-3:8080/v1/demo-name-assertions
+    ports:
+      - "${CREDENTIALS_API_3_PORT:-41005}:8080"
+
+  credential-api-4:
+    <<: *credential-api
+    environment:
+      <<: *credential-api-environment
+      CREDENTIALS_DID_ASSERTIONS_URL: http://did-api-4:8080/v1/demo-name-assertions
+    ports:
+      - "${CREDENTIALS_API_4_PORT:-41006}:8080"
+
+  # One PQS pipeline and one PostgreSQL serve both products. This waiter checks the
+  # DID projections of that same shared database, so it also needs did-seed to have
+  # written its contracts to the participant the single pipeline already follows.
+  did-projection-waiter:
+    image: postgres:18.6-alpine
+    entrypoint: ["/workspace/scripts/wait-for-projections.sh"]
+    environment:
+      PGHOST: credential-postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-pqs}
+      PGUSER: ${POSTGRES_USER:-pqs}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+      DID_SEED_COUNT: ${DID_SEED_COUNT:-1}
+      PROJECTION_TIMEOUT_SECONDS: ${PROJECTION_TIMEOUT_SECONDS:-300}
+    volumes:
+      - ../../cn-did-standard/demo/scripts:/workspace/scripts:ro
+    depends_on:
+      credential-postgres:
+        condition: service_healthy
+      credential-pqs:
+        condition: service_healthy
+      did-seed:
+        condition: service_completed_successfully
+    networks:
+      - credential-network
+    restart: "no"
+
+  did-api-1: &did-api
+    build: ../../cn-did-standard/demo/java-api
+    environment: &did-api-environment
+      DID_HTTP_PORT: "8080"
+      DID_LISTING_HMAC_SECRET: ${DID_LISTING_HMAC_SECRET:-local-demo-only-hmac-secret-change-before-deployment}
+      DID_LISTING_TOKEN_TTL_SECONDS: ${DID_LISTING_TOKEN_TTL_SECONDS:-900}
+      DID_BOOTSTRAP_DSO_DID: ${DID_BOOTSTRAP_DSO_DID:-}
+      DID_API_INSTANCE_ID: did-api-1
+      CREDENTIALS_RESOLUTION_URL: http://credential-api-1:8080
+      DID_NAME_RESOLUTION_ENABLED: "true"
+      PQS_JDBC_URL: jdbc:postgresql://credential-postgres:5432/${POSTGRES_DB:-pqs}
+      PQS_DB_USER: ${POSTGRES_USER:-pqs}
+      PQS_DB_PASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
+    depends_on:
+      did-projection-waiter:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/q/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "${DID_API_1_PORT:-42003}:8080"
+    networks:
+      - credential-network
+
+  did-api-2:
+    <<: *did-api
+    environment:
+      <<: *did-api-environment
+      DID_API_INSTANCE_ID: did-api-2
+      CREDENTIALS_RESOLUTION_URL: http://credential-api-2:8080
+    ports:
+      - "${DID_API_2_PORT:-42004}:8080"
+
+  did-api-3:
+    <<: *did-api
+    environment:
+      <<: *did-api-environment
+      DID_API_INSTANCE_ID: did-api-3
+      CREDENTIALS_RESOLUTION_URL: http://credential-api-3:8080
+    ports:
+      - "${DID_API_3_PORT:-42005}:8080"
+
+  did-api-4:
+    <<: *did-api
+    environment:
+      <<: *did-api-environment
+      DID_API_INSTANCE_ID: did-api-4
+      CREDENTIALS_RESOLUTION_URL: http://credential-api-4:8080
+    ports:
+      - "${DID_API_4_PORT:-42006}:8080"
+
+  credential-bft-reader-api:
+    build: ./bft-reader/java-api
+    environment:
+      CREDENTIAL_BFT_HTTP_PORT: "8080"
+      CREDENTIAL_BFT_ORIGINS: http://credential-api-1:8080,http://credential-api-2:8080,http://credential-api-3:8080,http://credential-api-4:8080
+    depends_on:
+      credential-api-1:
+        condition: service_healthy
+      credential-api-2:
+        condition: service_healthy
+      credential-api-3:
+        condition: service_healthy
+      credential-api-4:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/q/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "${CREDENTIAL_BFT_READER_PORT:-41007}:8080"
+    networks:
+      - credential-network
+
+  bft-reader-api:
+    build: ../../cn-did-standard/demo/bft-reader/java-api
+    environment:
+      BFT_READER_HTTP_PORT: "8080"
+      BFT_DID_REGISTRY_URL: http://did-api-1:8080/v1/dids/dso
+      BFT_ORIGIN_MAP: localhost:42003=http://did-api-1:8080,localhost:42004=http://did-api-2:8080,localhost:42005=http://did-api-3:8080,localhost:42006=http://did-api-4:8080
+      BFT_CONNECT_TIMEOUT: ${BFT_CONNECT_TIMEOUT:-2s}
+      BFT_READ_TIMEOUT: ${BFT_READ_TIMEOUT:-2s}
+      BFT_OPERATION_TIMEOUT: ${BFT_OPERATION_TIMEOUT:-3s}
+      BFT_MAX_BODY_BYTES: ${BFT_MAX_BODY_BYTES:-1048576}
+    depends_on:
+      did-api-1:
+        condition: service_healthy
+      did-api-2:
+        condition: service_healthy
+      did-api-3:
+        condition: service_healthy
+      did-api-4:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/q/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "${BFT_READER_PORT:-42007}:8080"
+    networks:
+      - credential-network
+
 volumes:
   credential-artifacts:
   credential-postgres-data:
+  did-artifacts:
 
 networks:
   credential-network:
