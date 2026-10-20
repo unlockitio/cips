@@ -4,6 +4,15 @@ import Canton.Network.Did.Demo
 import Canton.Network.Did.V1 (Did(..))
 import Daml.Script
 
+-- The seeded alias is a self-claim by the DSO document about its own Party. It
+-- is deliberately not an allocation: a consumer must still cross-check the name
+-- registry. Operators assert further aliases with DemoDidDocument_AssertAliases.
+seedNetwork : Text
+seedNetwork = "localnet"
+
+seedAliasName : Text
+seedAliasName = "dso.canton"
+
 data SeedParties = SeedParties with
   dso : Party
 
@@ -15,18 +24,67 @@ main = script do
 resume : SeedParties -> Script [ContractId DemoDidDocument]
 resume = script . runSeed
 
+-- Standalone has no Credentials API, so its DID document cannot advertise
+-- proxy routes. Existing documents are never silently rewritten on rerun.
+mainStandalone : Script [ContractId DemoDidDocument]
+mainStandalone = script do
+  dso <- allocatePartyByHint (PartyIdHint "DSO")
+  runSeedStandalone SeedParties with dso
+
+resumeStandalone : SeedParties -> Script [ContractId DemoDidDocument]
+resumeStandalone = script . runSeedStandalone
+
+runSeedStandalone : SeedParties -> Script [ContractId DemoDidDocument]
+runSeedStandalone parties =
+  ensureDocumentWithServices parties.dso ("did:canton:" <> partyToText parties.dso) "dso" False
+
+-- Add demo-only claims after the credentials stack supplies its allocated Party.
+-- The DID ledger need not host that Party: it is data in a self-claim, not a signatory.
+data CrossStackParties = CrossStackParties with
+  dso : Party
+  allocatedAlice : Party
+
+assertCrossStackNames : CrossStackParties -> Script ()
+assertCrossStackNames parties = do
+  documents <- queryFilter parties.dso (\(document : DemoDidDocument) -> document.document.id == Did ("did:canton:" <> partyToText parties.dso))
+  (cid, document) <- case documents of
+    [entry] -> pure entry
+    _ -> abort "expected exactly one seeded DSO DID"
+  let expected =
+        [ demoNameAlias seedNetwork "dso.canton" parties.dso
+        , demoNameAlias seedNetwork "alice.canton" parties.allocatedAlice
+        , demoNameAlias seedNetwork "bob.canton" parties.dso
+        ]
+  if document.aliases == expected then pure ()
+  else if document.aliases == [demoNameAlias seedNetwork seedAliasName parties.dso] then do
+    _ <- submit parties.dso do
+      exerciseCmd cid DemoDidDocument_AssertAliases with assertedAliases = expected
+    pure ()
+  else abort "DID aliases differ from the expected demo seed; refusing to overwrite"
+
 runSeed : SeedParties -> Script [ContractId DemoDidDocument]
 runSeed parties =
   ensureDocument parties.dso ("did:canton:" <> partyToText parties.dso) "dso"
 
 ensureDocument : Party -> Text -> Text -> Script [ContractId DemoDidDocument]
-ensureDocument owner didText label = do
+ensureDocument owner didText label = ensureDocumentWithServices owner didText label True
+
+ensureDocumentWithServices : Party -> Text -> Text -> Bool -> Script [ContractId DemoDidDocument]
+ensureDocumentWithServices owner didText label advertiseNames = do
   existing <- queryFilter owner (\document -> document.document.id == Did didText)
   assertMsg ("Duplicate DID document: " <> didText) (length existing <= 1)
   case existing of
-    [(cid, _)] -> pure [cid]
+    [(cid, document)] -> do
+      assertMsg "existing DID document service profile differs from selected deployment; refusing to advertise unavailable routes"
+        (length document.document.services == (if advertiseNames then 8 else 6))
+      pure [cid]
     [] -> do
       now <- getTime
-      cid <- submit owner do createCmd (demoDocument owner didText label now)
+      cid <- submit owner do
+        let base = demoDocument owner didText label now
+        let services = if advertiseNames then base.document.services else take 6 base.document.services
+        createCmd (base with
+          document = base.document with services
+          aliases = [demoNameAlias seedNetwork seedAliasName owner])
       pure [cid]
     _ -> abort ("Duplicate DID document: " <> didText)

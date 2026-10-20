@@ -2,6 +2,8 @@
 
 Only public PQS 3.5 functions are used, never physical `__*` tables or a transactions table. The BFT reader has no database access and remains singular-only.
 
+In the unified default stack these queries run against the one shared PQS database that also holds the Credentials projections, reached at `credential-postgres:5432`. The historical reader signatures and lifecycle columns below were verified live on that database against the `participant-query-store:3.5.8` image, which is the same image as the digest this demo pins. Separation between the two products is by exact interface identifier, not by database.
+
 Exact interface identifiers, shared with singular active queries:
 
 - `canton-network-did-interfaces:Canton.Network.Did.V1:DidDocument`

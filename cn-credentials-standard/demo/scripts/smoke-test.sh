@@ -2,6 +2,10 @@
 set -eu
 
 BASE="http://localhost:${CREDENTIALS_API_PORT:-41003}"
+NETWORK=${CREDENTIALS_NETWORK:-localnet}
+# Mirrors the Compose default: the unified stack always configures the DID source.
+# Set this to the empty string to assert the absent-capability behaviour instead.
+CREDENTIALS_DID_ASSERTIONS_URL=${CREDENTIALS_DID_ASSERTIONS_URL-http://did-api-1:8080/v1/demo-name-assertions}
 status() { curl --silent --output /dev/null --write-out '%{http_code}' "$1"; }
 
 until curl --fail --silent "$BASE/q/health/ready" >/dev/null; do
@@ -41,12 +45,37 @@ intrinsic=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:credential:000")
 printf '%s' "$intrinsic" | jq -e '
   .credentialId == "urn:demo:credential:000" and
   (.contractId | type == "string") and
-  (.credential.issuer | type == "object") and
-  (.credential.credentialTypes | type == "array") and
-  (.credential.credentialSubject | type == "array") and
-   (.credential.holders | type == "array") and
-   (.credential.anchorers.hd | type == "string") and
+   .credential["@context"][0] == "https://www.w3.org/ns/credentials/v2" and
+   (.credential.type | index("VerifiableCredential") != null) and
+   (.credential.issuer | type == "string") and
+   (.credential.credentialSubject | type == "array") and
+   (.canton.holders | type == "array") and
+   (.canton.anchorers[0] | type == "string") and
   (has("registration") | not)
+' >/dev/null
+
+for scenario in external-did external-holderless; do
+  anchored=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:scenario:$scenario")
+  printf '%s' "$anchored" | jq -e --arg scenario "$scenario" '
+    .credentialId == ("urn:demo:scenario:" + $scenario) and
+    (.credential.issuer | type == "string") and
+    (.canton.holders == []) and
+    (.canton.anchorers | length == 1) and
+    (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
+    (if $scenario == "external-holderless" then
+      (.credential.credentialSubject[0] | has("id") | not)
+    else (.credential.credentialSubject[0].id | startswith("did:key:")) end)
+  ' >/dev/null
+done
+expired_registration=$(curl --fail --silent "$BASE/v1/registered-credentials/urn:demo:scenario:expired-registration")
+printf '%s' "$expired_registration" | jq -e '
+  .credentialId == "urn:demo:scenario:expired-registration" and
+  (.credential.issuer | startswith("DemoIssuer::")) and
+  (.canton.anchorers | length == 1) and
+  (.canton.anchorers[0] | startswith("DemoIssuer::")) and
+  (.canton.holders | length == 1) and
+  (.credential.validUntil | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 > now) and
+  (.registration.expiresAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 < now)
 ' >/dev/null
 
 registered=$(curl --fail --silent "$BASE/v1/registered-credentials/urn:demo:credential:000")
@@ -80,5 +109,24 @@ for family in credentials registered-credentials; do
   [ "$(status "$BASE/v1/$family?page=0&pageSize=101")" = 400 ]
 done
 
+name_credential=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:name:alice.canton")
+subject_party=$(printf '%s' "$name_credential" | jq -r '.credential.credentialSubject[0].id')
+[ -n "$subject_party" ] && [ "$subject_party" != null ]
+resolved=$(curl --fail --silent --get "$BASE/v1/resolve" --data-urlencode 'name=alice.canton' --data-urlencode "network=$NETWORK")
+printf '%s' "$resolved" | jq -e --arg party "$subject_party" --arg fqpn "$NETWORK:demo:alice.canton" '.fqpn == $fqpn and .party_id == $party and .display_name == "alice.canton" and (.valid_until | type == "string")' >/dev/null
+reverse=$(curl --fail --silent --get "$BASE/v1/reverse-resolve" --data-urlencode "party=$subject_party" --data-urlencode "network=$NETWORK")
+printf '%s' "$reverse" | jq -e --arg party "$subject_party" --arg fqpn "$NETWORK:demo:alice.canton" 'length == 1 and .[0].party_id == $party and .[0].fqpn == $fqpn' >/dev/null
+[ "$(status "$BASE/v1/resolve?name=alice.canton")" = 400 ]
+[ "$(status "$BASE/v1/resolve?name=alice.canton&network=invalid")" = 400 ]
+if [ -n "${CREDENTIALS_DID_ASSERTIONS_URL:-}" ]; then
+  did_status=$(status "$BASE/v1/resolve?name=alice.canton&network=$NETWORK&source=did")
+  case "$did_status" in
+    200|404|409|503) : ;;
+    *) printf '%s\n' "Unexpected source=did status with a configured DID source: $did_status" >&2; exit 1 ;;
+  esac
+else
+  [ "$(status "$BASE/v1/resolve?name=alice.canton&network=$NETWORK&source=did")" = 422 ]
+fi
+[ "$(status "$BASE/v1/resolve?name=alice.canton&network=$NETWORK&source=unknown")" = 400 ]
 [ "$(status "$BASE/api/v1/credentials")" = 404 ]
-printf '%s\n' "Smoke passed: canonical intrinsic and registered routes, separate response objects, bounded pages, stable order, errors, and no implicit /api/v1 alias."
+printf '%s\n' "Smoke passed: credential records, demo name resolution and reverse resolution, validation errors, and no implicit /api/v1 alias."

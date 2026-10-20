@@ -36,20 +36,25 @@ public class PqsDidQueryClient {
     static final String REGISTERED_DID_DOCUMENT_INTERFACE =
             "canton-network-did-interfaces:Canton.Network.Did.V1:RegisteredDidDocument";
     static final String FIND_INTRINSIC_PAGE_SQL = """
-            select d.contract_id, d.payload as document_payload
-              from active(?) d
+             select d.contract_id, d.payload as document_payload, t.payload as template_payload
+               from active(?) d left join active(?) t on t.contract_id = d.contract_id
+
              order by d.payload -> 'id' ->> 'value', d.contract_id
              limit ? offset ?
             """;
     static final String FIND_INTRINSIC_BY_DID_SQL = """
-            select d.contract_id, d.payload as document_payload
-              from active(?) d
+             select d.contract_id, d.payload as document_payload, t.payload as template_payload
+               from active(?) d left join active(?) t on t.contract_id = d.contract_id
+
              where d.payload -> 'id' ->> 'value' = ?
              order by d.contract_id limit 2
             """;
     static final String REGISTERED_SELECT = """
-            select d.contract_id, d.payload as document_payload, r.payload as registration_payload
-              from active(?) d join active(?) r using (contract_id)
+             select d.contract_id, d.payload as document_payload, r.payload as registration_payload,
+                    t.payload as template_payload
+               from active(?) d join active(?) r using (contract_id)
+               left join active(?) t on t.contract_id = d.contract_id
+
             """;
     static final String FIND_REGISTERED_PAGE_SQL = REGISTERED_SELECT
             + " order by d.payload -> 'id' ->> 'value', d.contract_id limit ? offset ?";
@@ -60,6 +65,23 @@ public class PqsDidQueryClient {
             + " order by d.payload -> 'id' ->> 'value', d.contract_id limit ? offset ?";
     static final String READINESS_SQL =
             "select 1 from active(?) d join active(?) r using (contract_id) limit 1";
+    // PQS 3.5.8 set_latest(NULL) returns NULL, so pin the session snapshot explicitly.
+    static final String LATEST_OFFSET_SQL = "select set_latest(latest_offset())";
+    static final String DEMO_DID_DOCUMENT_TEMPLATE =
+            "canton-network-did-demo:Canton.Network.Did.Demo:DemoDidDocument";
+    // Bounded by the supplied alias or subject and an explicit limit; this never
+    // scans the whole DID collection.
+    static final String FIND_DEMO_NAME_ASSERTIONS_SQL = """
+            select t.payload -> 'document' -> 'id' ->> 'value' as did,
+                   alias ->> 'alias' as alias,
+                   alias ->> 'subject' as subject
+              from active(?) t
+             cross join lateral jsonb_array_elements(t.payload -> 'aliases') as alias
+             where (?::text is null or alias ->> 'alias' = ?::text)
+               and (?::text is null or alias ->> 'subject' = ?::text)
+             order by alias ->> 'alias', t.contract_id
+             limit ?
+            """;
 
     private final AgroalDataSource dataSource;
     private final ObjectMapper objectMapper;
@@ -73,51 +95,80 @@ public class PqsDidQueryClient {
     public List<IntrinsicDid> findIntrinsicPage(long offset, int limit) {
         return queryIntrinsic(FIND_INTRINSIC_PAGE_SQL, statement -> {
             statement.setString(1, DID_DOCUMENT_INTERFACE);
-            statement.setInt(2, limit);
-            statement.setLong(3, offset);
+            statement.setString(2, DEMO_DID_DOCUMENT_TEMPLATE);
+            statement.setInt(3, limit);
+            statement.setLong(4, offset);
         });
     }
 
     public List<IntrinsicDid> findDsoCandidates() {
-        return queryIntrinsic("select d.contract_id, d.payload as document_payload from active(?) d"
+        return queryIntrinsic("select d.contract_id, d.payload as document_payload, t.payload as template_payload"
+                + " from active(?) d left join active(?) t on t.contract_id = d.contract_id"
                 + " where d.payload -> 'id' ->> 'value' like 'did:canton:DSO::%' order by d.contract_id limit 2",
-                statement -> statement.setString(1, DID_DOCUMENT_INTERFACE));
+                statement -> {
+                    statement.setString(1, DID_DOCUMENT_INTERFACE);
+                    statement.setString(2, DEMO_DID_DOCUMENT_TEMPLATE);
+                });
+    }
+
+    public List<io.unlockit.domain.did.entity.DemoNameAssertion> findDemoNameAssertions(
+            String alias, String subject, int limit) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(FIND_DEMO_NAME_ASSERTIONS_SQL)) {
+            statement.setString(1, DEMO_DID_DOCUMENT_TEMPLATE);
+            statement.setString(2, alias);
+            statement.setString(3, alias);
+            statement.setString(4, subject);
+            statement.setString(5, subject);
+            statement.setInt(6, limit);
+            List<io.unlockit.domain.did.entity.DemoNameAssertion> results = new ArrayList<>();
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    results.add(new io.unlockit.domain.did.entity.DemoNameAssertion(
+                            rows.getString("did"), rows.getString("alias"), rows.getString("subject")));
+                }
+            }
+            return results;
+        } catch (SQLException exception) {
+            throw new PqsUnavailableException(exception);
+        }
     }
 
     public List<IntrinsicDid> findIntrinsicByDid(String did) {
         return queryIntrinsic(FIND_INTRINSIC_BY_DID_SQL, statement -> {
             statement.setString(1, DID_DOCUMENT_INTERFACE);
-            statement.setString(2, did);
+            statement.setString(2, DEMO_DID_DOCUMENT_TEMPLATE);
+            statement.setString(3, did);
         });
     }
 
     public List<RegisteredDid> findRegisteredPage(long offset, int limit) {
         return queryRegistered(FIND_REGISTERED_PAGE_SQL, statement -> {
             bindInterfaces(statement);
-            statement.setInt(3, limit);
-            statement.setLong(4, offset);
+            statement.setInt(4, limit);
+            statement.setLong(5, offset);
         });
     }
 
     public List<RegisteredDid> findRegisteredByDid(String did) {
         return queryRegistered(FIND_REGISTERED_BY_DID_SQL, statement -> {
             bindInterfaces(statement);
-            statement.setString(3, did);
+            statement.setString(4, did);
         });
     }
 
     public List<RegisteredDid> findRegisteredByPartyId(String partyId, long offset, int limit) {
         return queryRegistered(FIND_REGISTERED_BY_PARTY_SQL, statement -> {
             bindInterfaces(statement);
-            statement.setString(3, partyId);
-            statement.setInt(4, limit);
-            statement.setLong(5, offset);
+            statement.setString(4, partyId);
+            statement.setInt(5, limit);
+            statement.setLong(6, offset);
         });
     }
 
     public long latestOffset() {
         try (Connection connection = dataSource.getConnection();
-                PreparedStatement statement = connection.prepareStatement("select set_latest(NULL)" );
+                PreparedStatement statement = connection.prepareStatement(LATEST_OFFSET_SQL);
                 ResultSet rows = statement.executeQuery()) {
             if (!rows.next()) throw new SQLException("PQS did not select a latest offset");
             long offset = rows.getLong(1);
@@ -141,8 +192,8 @@ public class PqsDidQueryClient {
     static String historySource(String state) {
         return switch (state) {
             case "active" -> "active(?::text, ?::bigint)";
-            case "archived" -> "archives(?::text, 0::bigint, ?::bigint)";
-            case "all" -> "creates(?::text, 0::bigint, ?::bigint)";
+            case "archived" -> "archives(?::text, oldest_offset(), ?::bigint)";
+            case "all" -> "creates(?::text, oldest_offset(), ?::bigint)";
             default -> throw new IllegalArgumentException("Invalid lifecycle state");
         };
     }
@@ -150,18 +201,23 @@ public class PqsDidQueryClient {
     static String historySql(boolean registered, String state) {
         String source = historySource(state);
         return "with documents as (select * from " + source + "), "
-                + "archived as (select * from archives(?::text, 0::bigint, ?::bigint))"
+                + "archived as (select * from archives(?::text, oldest_offset(), ?::bigint))"
                 + (registered ? ", registrations as (select * from " + source + ")" : "")
                 + " select d.contract_id, d.payload as document_payload, d.template_fqn, d.payload_type,"
                 + " d.create_event_pk, d.create_event_id, d.created_at_ix, d.created_at_offset, d.created_effective_at,"
                 + " a.archive_event_pk, a.archive_event_id, a.archived_at_ix, a.archived_at_offset, a.archived_effective_at"
                 + (registered ? ", r.payload as registration_payload" : "")
+                + ", t.payload as template_payload"
                 + " from documents d left join archived a on d.contract_id = a.contract_id"
                 + " and d.create_event_id = a.create_event_id and d.created_at_offset = a.created_at_offset"
                 + (registered ? " join registrations r on d.contract_id = r.contract_id"
                     + " and d.create_event_id = r.create_event_id and d.created_at_offset = r.created_at_offset"
                     + " and d.created_at_ix = r.created_at_ix"
-                    + (state.equals("archived") ? " and d.archive_event_id = r.archive_event_id and d.archived_at_offset = r.archived_at_offset" : "") : "")
+                     + (state.equals("archived") ? " and d.archive_event_id = r.archive_event_id and d.archived_at_offset = r.archived_at_offset" : "") : "")
+                + " left join " + source + " t on t.contract_id = d.contract_id"
+                + " and t.create_event_id = d.create_event_id and t.created_at_offset = d.created_at_offset"
+                + " and t.created_at_ix = d.created_at_ix"
+                + (state.equals("archived") ? " and t.archive_event_id = d.archive_event_id and t.archived_at_offset = d.archived_at_offset" : "")
                 + " where (?::text is null or (d.payload -> 'id' ->> 'value', d.contract_id) > (?::text, ?::text))"
                 + " and (?::timestamptz is null or d.created_effective_at >= ?::timestamptz)"
                 + " and (?::timestamptz is null or d.created_effective_at < ?::timestamptz)"
@@ -185,6 +241,8 @@ public class PqsDidQueryClient {
                 statement.setString(i++, REGISTERED_DID_DOCUMENT_INTERFACE);
                 statement.setLong(i++, snapshot);
             }
+            statement.setString(i++, DEMO_DID_DOCUMENT_TEMPLATE);
+            statement.setLong(i++, snapshot);
             statement.setString(i++, lastDid);
             statement.setString(i++, lastDid);
             statement.setString(i++, lastContract);
@@ -209,9 +267,10 @@ public class PqsDidQueryClient {
     com.fasterxml.jackson.databind.node.ObjectNode mapHistory(ResultSet rows, boolean registered) throws SQLException {
         Object representation = registered
                 ? io.unlockit.application.did.mapper.DidRepresentationMapper.toRepresentation(mapRegistered(
-                    rows.getString("contract_id"), rows.getString("document_payload"), rows.getString("registration_payload")))
+                    rows.getString("contract_id"), rows.getString("document_payload"), rows.getString("registration_payload"),
+                    rows.getString("template_payload")))
                 : io.unlockit.application.did.mapper.DidRepresentationMapper.toRepresentation(mapIntrinsic(
-                    rows.getString("contract_id"), rows.getString("document_payload")));
+                    rows.getString("contract_id"), rows.getString("document_payload"), rows.getString("template_payload")));
         com.fasterxml.jackson.databind.node.ObjectNode item = objectMapper.valueToTree(representation);
         var lifecycle = item.putObject("lifecycle");
         lifecycle.put("state", rows.getObject("archived_at_offset") == null ? "active" : "archived");
@@ -241,7 +300,8 @@ public class PqsDidQueryClient {
         }
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(READINESS_SQL)) {
-            bindInterfaces(statement);
+            statement.setString(1, DID_DOCUMENT_INTERFACE);
+            statement.setString(2, REGISTERED_DID_DOCUMENT_INTERFACE);
             statement.executeQuery();
         } catch (SQLException exception) {
             throw new PqsUnavailableException(exception);
@@ -255,7 +315,8 @@ public class PqsDidQueryClient {
             List<IntrinsicDid> results = new ArrayList<>();
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
-                    results.add(mapIntrinsic(rows.getString("contract_id"), rows.getString("document_payload")));
+                    results.add(mapIntrinsic(rows.getString("contract_id"), rows.getString("document_payload"),
+                            rows.getString("template_payload")));
                 }
             }
             return results;
@@ -272,7 +333,7 @@ public class PqsDidQueryClient {
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     results.add(mapRegistered(rows.getString("contract_id"), rows.getString("document_payload"),
-                            rows.getString("registration_payload")));
+                            rows.getString("registration_payload"), rows.getString("template_payload")));
                 }
             }
             return results;
@@ -281,20 +342,20 @@ public class PqsDidQueryClient {
         }
     }
 
-    IntrinsicDid mapIntrinsic(String contractId, String documentPayload) throws SQLException {
+    IntrinsicDid mapIntrinsic(String contractId, String documentPayload, String templatePayload) throws SQLException {
         try {
             JsonNode document = objectMapper.readTree(documentPayload);
             DidValue id = new DidValue(value(document.path("id")));
-            return new IntrinsicDid(contractId, id, document(document, id));
+            return new IntrinsicDid(contractId, id, document(document, id, aliases(templatePayload, document, id)));
         } catch (RuntimeException | JsonProcessingException exception) {
             throw new SQLException("PQS returned an unsupported DidDocument payload", exception);
         }
     }
 
-    RegisteredDid mapRegistered(String contractId, String documentPayload, String registrationPayload)
-            throws SQLException {
+    RegisteredDid mapRegistered(String contractId, String documentPayload, String registrationPayload,
+            String templatePayload) throws SQLException {
         try {
-            IntrinsicDid intrinsic = mapIntrinsic(contractId, documentPayload);
+            IntrinsicDid intrinsic = mapIntrinsic(contractId, documentPayload, templatePayload);
             JsonNode registered = objectMapper.readTree(registrationPayload);
             JsonNode document = objectMapper.readTree(documentPayload);
             if (!registered.path("document").equals(document)) {
@@ -325,12 +386,33 @@ public class PqsDidQueryClient {
         }
     }
 
-    private DidDocument document(JsonNode document, DidValue id) {
-        return new DidDocument(id,
+    private DidDocument document(JsonNode document, DidValue id, List<String> aliases) {
+        return new DidDocument(id, aliases,
                 stream(document.path("controllers")).map(node -> new DidValue(value(node))).toList(),
                 stream(document.path("verificationMethods")).map(this::verificationMethod).toList(),
                 relationships(document.path("verificationRelationships")),
                 stream(document.path("services")).map(this::service).toList());
+    }
+
+    private List<String> aliases(String templatePayload, JsonNode document, DidValue id)
+            throws JsonProcessingException {
+        if (templatePayload == null) return List.of();
+        JsonNode template = objectMapper.readTree(templatePayload);
+        String party = id.value().startsWith("did:canton:") ? id.value().substring("did:canton:".length()) : "";
+        if (!template.path("document").equals(document) || !party.equals(template.path("owner").asText())
+                || !party.equals(template.path("registration").path("registryAdmin").asText())) {
+            throw new IllegalArgumentException("joined demo template disagrees with DID document owner or registration");
+        }
+        JsonNode claims = template.path("aliases");
+        if (!claims.isArray()) throw new IllegalArgumentException("expected demo template alias array");
+        // The demo registry allocation is not joined here: expose only the seed's
+        // specifically scoped self-claim, never Alice's other-subject or Bob's conflict.
+        String seeded = "urn:fqpn:localnet:demo:dso.canton";
+        if (!party.startsWith("DSO::")) return List.of();
+        return java.util.stream.StreamSupport.stream(claims.spliterator(), false)
+                .filter(claim -> seeded.equals(claim.path("alias").asText())
+                        && party.equals(claim.path("subject").asText()))
+                .map(claim -> seeded).distinct().toList();
     }
 
     private VerificationMethod verificationMethod(JsonNode node) {
@@ -369,6 +451,7 @@ public class PqsDidQueryClient {
     private static void bindInterfaces(PreparedStatement statement) throws SQLException {
         statement.setString(1, DID_DOCUMENT_INTERFACE);
         statement.setString(2, REGISTERED_DID_DOCUMENT_INTERFACE);
+        statement.setString(3, DEMO_DID_DOCUMENT_TEMPLATE);
     }
 
     private static List<String> values(JsonNode array) {

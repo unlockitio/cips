@@ -4,6 +4,7 @@ import java.util.List;
 
 public record DidDocumentRepresentation(
         String id,
+        List<String> alsoKnownAs,
         List<String> controller,
         List<VerificationMethodRepresentation> verificationMethod,
         VerificationRelationshipsRepresentation verificationRelationships,

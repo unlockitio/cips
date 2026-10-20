@@ -5,6 +5,15 @@ import DA.NonEmpty (NonEmpty(..))
 import DA.TextMap qualified as TextMap
 import Splice.Api.Token.MetadataV1 qualified as Metadata
 
+-- A self-claimed name alias. It is a discovery hint only: it is neither a unique
+-- allocation of the name nor proof that the subject owns it. Duplicate and
+-- conflicting aliases are possible by construction, and the name registry
+-- remains the only allocation authority.
+data DemoNameAlias = DemoNameAlias with
+    alias : Text
+    subject : Party
+  deriving (Eq, Show)
+
 -- This stakeholder model is deliberately local to the non-normative demo.
 -- The document owner signs; registryAdmin is only the demo Party association and observer.
 template DemoDidDocument
@@ -12,6 +21,7 @@ template DemoDidDocument
     owner : Party
     document : DidDocumentView
     registration : DidRegistrationMetadata
+    aliases : [DemoNameAlias]
   where
     signatory owner
     observer registration.registryAdmin
@@ -25,11 +35,32 @@ template DemoDidDocument
       registeredDidDocument_publicFetchImpl _ _ =
         pure RegisteredDidDocumentView with ..
 
+    -- Self-assertion only. The owner may claim any alias, including one already
+    -- claimed elsewhere or pointing at a Party it does not control. Consumers
+    -- must cross-check an authoritative allocation before trusting an alias.
+    choice DemoDidDocument_AssertAliases : ContractId DemoDidDocument
+      with
+        assertedAliases : [DemoNameAlias]
+      controller owner
+      do create this with aliases = assertedAliases
+
 demoDocument : Party -> Text -> Text -> Time -> DemoDidDocument
 demoDocument owner didText label now = DemoDidDocument with
   owner
   document = documentView didText label
   registration = registrationView owner now
+  aliases = []
+
+-- Canonical demo alias value. DID Core alsoKnownAs values are URIs, so the
+-- CIP #171 fully qualified party name <network>:<resolver>:<name> is carried as
+-- a urn:fqpn URI rather than a bare name.
+demoAliasUri : Text -> Text -> Text -> Text
+demoAliasUri network resolver name = "urn:fqpn:" <> network <> ":" <> resolver <> ":" <> name
+
+demoNameAlias : Text -> Text -> Party -> DemoNameAlias
+demoNameAlias network name subject = DemoNameAlias with
+  alias = demoAliasUri network "demo" name
+  subject
 
 documentView : Text -> Text -> DidDocumentView
 documentView didText _label =
@@ -49,7 +80,20 @@ documentView didText _label =
       , demoService didText "credentials" "CantonCredentialService" "credentials"
       , demoService didText "asset-registries" "CantonAssetRegistryService" "asset-registries"
       , demoService didText "assets" "CantonAssetService" "assets"
+      , nameResolutionService didText "name-resolution" "CantonDemoNameResolutionService" "resolve"
+      , nameResolutionService didText "reverse-name-resolution" "CantonDemoReverseNameResolutionService" "reverse-resolve"
       ]
+
+-- These are discovery hints for the separate credentials demo, not naming authority.
+nameResolutionService : Text -> Text -> Text -> Text -> DidService
+nameResolutionService didText fragment serviceType path = DidService with
+  id = ServiceId (didText <> "#" <> fragment)
+  serviceType = ServiceType serviceType
+  serviceEndpoint = VersionedServiceEndpoint with
+    version = "1.0"
+    endpoints = NonEmpty
+      (endpoint 42003 path 0)
+      [endpoint 42004 path 1, endpoint 42005 path 2, endpoint 42006 path 3]
 
 demoService : Text -> Text -> Text -> Text -> DidService
 demoService didText fragment serviceType path = DidService with

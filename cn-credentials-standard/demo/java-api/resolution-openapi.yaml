@@ -1,0 +1,123 @@
+openapi: 3.0.3
+info:
+  title: Credentials demo name resolution variant
+  version: 0.1.0-demo
+  description: |
+    Nonstandard demo variant of draft CIP #171 (head eac39c97). This is not a
+    conformance claim. It uses /v1 rather than /v0, adds source, and uses the
+    demo resolver identifier and claim key rather than a registered naming system.
+servers:
+  - url: /v1
+paths:
+  /resolve:
+    get:
+      operationId: resolveDemoName
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+          description: Printable non-whitespace ASCII demo name (e.g. alice.canton).
+        - $ref: '#/components/parameters/Network'
+        - $ref: '#/components/parameters/Source'
+      responses:
+        '200':
+          description: Exactly one currently valid active credential binding.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResolutionResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unsupported'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /reverse-resolve:
+    get:
+      operationId: reverseResolveDemoName
+      parameters:
+        - name: party
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+          description: Exact Canton Party subject ID, never issuer or holder.
+        - $ref: '#/components/parameters/Network'
+        - $ref: '#/components/parameters/Source'
+      responses:
+        '200':
+          description: Known names, possibly empty; duplicate bindings conflict.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ResolutionResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unsupported'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  parameters:
+    Network:
+      name: network
+      in: query
+      required: true
+      description: Must equal the deployment's configured single network (localnet by default).
+      schema: {type: string, enum: [mainnet, testnet, devnet, localnet]}
+    Source:
+      name: source
+      in: query
+      required: false
+      description: |
+        credential is the default and uses registry-allocated name credentials only.
+        did additionally requires an agreeing self-claimed alias from the separate
+        DID demo. A DID alias is a discovery hint, never an allocation: the registry
+        credential still decides the answer. Forward resolution returns 200 only when
+        exactly one DID alias and the active allocation name the same Party; it returns
+        409 when the alias names a different Party or when conflicting duplicate aliases
+        exist, and 404 when the name is unallocated or unasserted. Reverse resolution
+        returns only the names where allocation and a self-claim for that exact Party
+        agree. did is 422 when the deployment has no configured DID assertion source
+        and 503 when that configured source is unreachable or unusable.
+      schema: {type: string, enum: [credential, did], default: credential}
+  schemas:
+    ResolutionResult:
+      type: object
+      required: [fqpn, party_id, display_name]
+      properties:
+        fqpn: {type: string, example: 'localnet:demo:alice.canton'}
+        party_id: {type: string}
+        display_name: {type: string}
+        metadata: {type: object, additionalProperties: true}
+        valid_until: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+  responses:
+    BadRequest:
+      description: Invalid or missing argument, unknown source, or network mismatch.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: No eligible active name credential found.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: |
+        Multiple eligible bindings for the same name, or a DID alias that disagrees
+        with the registry allocation, or conflicting duplicate DID aliases.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unsupported:
+      description: The DID source is not configured for this deployment.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unavailable:
+      description: The PQS query failed, or the configured DID assertion source is unavailable.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}

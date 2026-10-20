@@ -17,8 +17,20 @@ class CredentialListingManagerTest {
   CredentialQueryClient client;
   CredentialListingManager manager;
   CredentialFilters filters = new CredentialFilters(null, null, null, null, null, null, null, null, null, null);
-  Credential first = new Credential("c1", "id1", null, null, null, null, null, null, null);
-  Credential second = new Credential("c2", "id2", null, null, null, null, null, null, null);
+  private static final ObjectMapper JSON = new ObjectMapper();
+  Credential first = credential("c1", "id1");
+  Credential second = credential("c2", "id2");
+
+  private static Credential credential(String contract, String id) {
+    var issuer = JSON.createObjectNode().put("tag", "W3C_VC_Identifier_Party").put("value", "issuer");
+    var subject = JSON.createObjectNode();
+    subject.putNull("id");
+    subject.set("claims", JSON.createObjectNode());
+    var anchors = JSON.createObjectNode().put("hd", "anchor");
+    anchors.set("tl", JSON.createArrayNode());
+    return new Credential(contract, id, issuer, JSON.createArrayNode().add("VerifiableCredential"),
+        JSON.createArrayNode().add(subject), JSON.createArrayNode(), anchors, null, null);
+  }
 
   @BeforeEach void setup() {
     client = mock(CredentialQueryClient.class);

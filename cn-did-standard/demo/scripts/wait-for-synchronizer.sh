@@ -3,12 +3,13 @@ set -eu
 
 JSON_API_URL=${JSON_API_URL:-http://did-canton:7575}
 READINESS_TIMEOUT_SECONDS=${READINESS_TIMEOUT_SECONDS:-600}
+READINESS_SYNCHRONIZER=${READINESS_SYNCHRONIZER:-did-synchronizer}
 started=$(date +%s)
 
 while :; do
   if response=$(curl --fail --silent --show-error "$JSON_API_URL/v2/state/connected-synchronizers" 2>/dev/null) \
-      && printf '%s' "$response" | grep -q '"synchronizerAlias":"did-synchronizer"'; then
-    printf '%s\n' "DID participant is connected to did-synchronizer."
+      && printf '%s' "$response" | grep -q "\"synchronizerAlias\":\"$READINESS_SYNCHRONIZER\""; then
+    printf '%s\n' "DID participant is connected to $READINESS_SYNCHRONIZER."
     exit 0
   fi
 

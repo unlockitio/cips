@@ -37,6 +37,7 @@ public final class DidRepresentationMapper {
         var relationships = document.verificationRelationships();
         return new DidDocumentRepresentation(
                 document.id().value(),
+                document.alsoKnownAs(),
                 document.controller().stream().map(Object::toString).toList(),
                 document.verificationMethod().stream()
                         .map(method -> new VerificationMethodRepresentation(

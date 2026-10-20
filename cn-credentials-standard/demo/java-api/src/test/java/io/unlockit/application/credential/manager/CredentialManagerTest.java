@@ -29,9 +29,16 @@ class CredentialManagerTest {
   void setUp() {
     manager = new CredentialManager(new CredentialListingManager(queryClient, new CredentialResponseMapper(),
         new ObjectMapper(), "test-credentials-secret-at-least-32-bytes", 900));
-    var json = new ObjectMapper().createObjectNode();
-    credential = new Credential(
-        "contract", "credential", json, json, json, json, json, null, null);
+    var mapper = new ObjectMapper();
+    var issuer = mapper.createObjectNode().put("tag", "W3C_VC_Identifier_Party").put("value", "issuer");
+    var subject = mapper.createObjectNode();
+    subject.putNull("id");
+    subject.set("claims", mapper.createObjectNode());
+    var anchors = mapper.createObjectNode().put("hd", "anchor");
+    anchors.set("tl", mapper.createArrayNode());
+    credential = new Credential("contract", "credential", issuer,
+        mapper.createArrayNode().add("VerifiableCredential"), mapper.createArrayNode().add(subject),
+        mapper.createArrayNode(), anchors, null, null);
   }
 
   private static io.unlockit.domain.credential.query.CredentialFilters filters() {

@@ -7,6 +7,7 @@ import java.util.Set;
 
 public record DidDocument(
         DidValue id,
+        List<String> alsoKnownAs,
         List<DidValue> controller,
         List<VerificationMethod> verificationMethod,
         VerificationRelationships verificationRelationships,
@@ -15,6 +16,7 @@ public record DidDocument(
         if (id == null) {
             throw new IllegalArgumentException("DID document ID is required");
         }
+        alsoKnownAs = alsoKnownAs == null ? List.of() : List.copyOf(alsoKnownAs);
         controller = controller == null ? List.of() : List.copyOf(controller);
         if (controller.isEmpty()) {
             throw new IllegalArgumentException("DID document requires at least one controller");

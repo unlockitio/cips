@@ -1,6 +1,6 @@
 module Canton.Network.Did.Tests where
 
-import Canton.Network.Did.Seed (runSeed, SeedParties(..))
+import Canton.Network.Did.Seed (runSeed, runSeedStandalone, SeedParties(..))
 import Canton.Network.Did.Demo
 import Canton.Network.Did.V1
 import Daml.Script
@@ -17,11 +17,13 @@ main = script do
       owner = alice
       document = documentView "did:example:test-alice" "alice"
       registration = registrationView alice now
+      aliases = []
   bobCid <- submit bob do
     createCmd DemoDidDocument with
       owner = bob
       document = documentView "did:example:test-bob" "bob"
       registration = registrationView bob now
+      aliases = []
 
   let aliceRegisteredCid = toInterfaceContractId @RegisteredDidDocument aliceCid
   aliceDocument <- queryContractId alice aliceCid
@@ -38,12 +40,22 @@ main = script do
       && document.verificationRelationships.assertionMethod == []
       && document.verificationRelationships.capabilityInvocation == [])
   let services = document.services
-  assertMsg "demo document advertises exactly six service families" (length services == 6)
-  assertMsg "every service preserves four ordered endpoints"
+  assertMsg "demo document advertises six core and two demo name-resolution services" (length services == 8)
+  assertMsg "core services preserve four ordered endpoints"
     (all (\service ->
       let endpoints = service.serviceEndpoint.endpoints
       in length (endpoints.hd :: endpoints.tl) == 4
-        && map (.priority) (endpoints.hd :: endpoints.tl) == [Some 0, Some 1, Some 2, Some 3]) services)
+        && map (.priority) (endpoints.hd :: endpoints.tl) == [Some 0, Some 1, Some 2, Some 3]) (take 6 services))
+  assertMsg "name resolution services advertise four working DID-host ports and ordered priorities"
+    (map (\service ->
+      let endpoints = service.serviceEndpoint.endpoints
+      in (service.serviceEndpoint.version, map (.uri) (endpoints.hd :: endpoints.tl), map (.priority) (endpoints.hd :: endpoints.tl))) (drop 6 services)
+      == [("1.0", map (\port -> ServiceEndpointUri ("http://localhost:" <> show port <> "/v1/resolve")) [42003, 42004, 42005, 42006], [Some 0, Some 1, Some 2, Some 3])
+         , ("1.0", map (\port -> ServiceEndpointUri ("http://localhost:" <> show port <> "/v1/reverse-resolve")) [42003, 42004, 42005, 42006], [Some 0, Some 1, Some 2, Some 3])])
+  standalone <- runSeedStandalone (SeedParties bob)
+  standaloneDocument <- queryContractId bob (head standalone)
+  assertMsg "standalone seed does not advertise unavailable Credentials proxy routes"
+    (fmap (\contract -> length contract.document.services) standaloneDocument == Some 6)
   fresh <- runSeed (SeedParties dso)
   rerun <- runSeed (SeedParties dso)
   assertMsg "fresh seed creates one contract and rerun preserves it" (length fresh == 1 && fresh == rerun)
@@ -77,3 +89,27 @@ main = script do
   bobDocument <- queryContractId bob bobCid
   assertMsg "Alice and Bob have distinct demo Party associations"
     (fmap (\contract -> contract.registration.registryAdmin) bobDocument == Some bob && alice /= bob)
+
+  -- alsoKnownAs aliases are self-claims. Nothing prevents Alice and Bob from
+  -- claiming the same alias, or from claiming it for a Party they do not control.
+  assertMsg "seeded documents start without self-claimed aliases"
+    (fmap (.aliases) aliceDocument == Some [])
+  let canonical = demoNameAlias "localnet" "alice.canton" alice
+  assertMsg "canonical alias is a urn:fqpn URI carrying network, resolver and name"
+    (canonical.alias == "urn:fqpn:localnet:demo:alice.canton")
+  aliceAliasCid <- submit alice do
+    exerciseCmd aliceCid DemoDidDocument_AssertAliases with assertedAliases = [canonical]
+  claimed <- queryContractId alice aliceAliasCid
+  assertMsg "the owner's self-claim is recorded verbatim" (fmap (.aliases) claimed == Some [canonical])
+  bobAliasCid <- submit bob do
+    exerciseCmd bobCid DemoDidDocument_AssertAliases with
+      assertedAliases = [canonical, demoNameAlias "localnet" "alice.canton" bob]
+  conflicting <- queryContractId bob bobAliasCid
+  assertMsg "duplicate and foreign-subject aliases are possible, so allocation is never implied"
+    (fmap (.aliases) conflicting
+      == Some [canonical, DemoNameAlias "urn:fqpn:localnet:demo:alice.canton" bob])
+  submitMustFail bob do
+    exerciseCmd aliceAliasCid DemoDidDocument_AssertAliases with assertedAliases = []
+  seededAlias <- queryContractId dso (head fresh)
+  assertMsg "the seed claims the DSO alias for its own Party only"
+    (fmap (.aliases) seededAlias == Some [demoNameAlias "localnet" "dso.canton" dso])

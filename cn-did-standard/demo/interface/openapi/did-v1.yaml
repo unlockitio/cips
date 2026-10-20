@@ -52,6 +52,83 @@ paths:
       summary: Describe the asset discovery root
       responses:
         '200': { $ref: '#/components/responses/Discovery' }
+  /demo-name-assertions:
+    get:
+      operationId: listDemoNameAssertions
+      summary: Look up self-claimed demo name aliases
+      description: |
+        Demo-scoped lookup over the concrete demo template's self-claimed aliases.
+        Exactly one of alias or subject is required, and the query is bounded by that
+        value and a fixed maximum, never a full collection scan. An assertion is a
+         discovery hint only: several documents may claim the same alias and a claim may
+         name a Party the claimant does not control. Callers must cross-check an
+         authoritative name allocation before trusting a result. Only the seeded DSO
+         self-claim for dso.canton is projected as demo DID Document alsoKnownAs;
+         this lookup can return other, unverified claims.
+      parameters:
+        - name: alias
+          in: query
+          description: Canonical alias URI, for example urn:fqpn:localnet:demo:dso.canton.
+          schema: { type: string, minLength: 1 }
+        - name: subject
+          in: query
+          description: Exact Canton Party the alias claims.
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Bounded list of unverified self-claimed aliases, possibly empty.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [did, alias, subject]
+                  additionalProperties: false
+                  properties:
+                    did: { type: string, minLength: 1 }
+                    alias: { type: string, minLength: 1 }
+                    subject: { type: string, minLength: 1 }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /resolve:
+    get:
+      operationId: proxyDemoNameResolution
+      summary: Forward demo name resolution to the configured Credentials API
+      description: |
+        Unified demo only. Each DID replica proxies this bounded GET to the same
+        Credentials authority; no independent DID name authority or BFT quorum is
+        created. This is not a normative CIP-171 endpoint. Standalone DID deployments
+        do not configure the upstream and do not advertise this service.
+      parameters:
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: network, in: query, required: true, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [credential, did] } }
+      responses:
+        '200': { description: Credentials API JSON resolution result. }
+        '400': { description: Invalid request or unsupported query. }
+        '404': { description: Name not found. }
+        '409': { description: Conflicting name assertions or allocations. }
+        '422': { description: Unsupported capability. }
+        '503': { description: Credentials API unavailable. }
+  /reverse-resolve:
+    get:
+      operationId: proxyDemoReverseNameResolution
+      summary: Forward demo reverse name resolution to the configured Credentials API
+      description: Same unified-demo-only bounded proxy and authority as /resolve; not normative CIP-171.
+      parameters:
+        - { name: party, in: query, required: true, schema: { type: string } }
+        - { name: network, in: query, required: true, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [credential, did] } }
+      responses:
+        '200': { description: Credentials API JSON array of resolutions. }
+        '400': { description: Invalid request or unsupported query. }
+        '404': { description: Party not found. }
+        '409': { description: Conflicting name assertions or allocations. }
+        '422': { description: Unsupported capability. }
+        '503': { description: Credentials API unavailable. }
   /dids:
     get:
       operationId: listDids
@@ -272,10 +349,15 @@ components:
         serviceEndpoint: { $ref: '#/components/schemas/VersionedServiceEndpoint' }
     DidDocument:
       type: object
-      required: [id, controller, verificationMethod, verificationRelationships, service]
+      required: [id, alsoKnownAs, controller, verificationMethod, verificationRelationships, service]
       additionalProperties: false
       properties:
         id: { type: string }
+        alsoKnownAs:
+          type: array
+          description: Demo-only seeded DSO dso.canton self-claim URI; empty on other or missing concrete template projections. Not proof of name allocation or ownership.
+          uniqueItems: true
+          items: { type: string, format: uri }
         controller:
           type: array
           minItems: 1

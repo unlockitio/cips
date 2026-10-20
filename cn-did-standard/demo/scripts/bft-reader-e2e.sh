@@ -24,7 +24,8 @@ curl --fail --silent --path-as-is "$reader/v1/bft/dids/$encoded_did" |
     .quorum.required == 3 and .quorum.matched == 4 and .quorum.total == 4 and
     (.sources | length) == 4 and
     .result.didDocument.id == $did and .result.didDocument.controller == [$did] and
-    (.result.didDocument.service | length) == 6 and
+    .result.didDocument.alsoKnownAs == ["urn:fqpn:localnet:demo:dso.canton"] and
+    (.result.didDocument.service | length) == 8 and
     .result.didDocument.verificationMethod == [] and
     (.result.didDocument.verificationRelationships |
       .authentication == [] and .assertionMethod == [] and .keyAgreement == [] and

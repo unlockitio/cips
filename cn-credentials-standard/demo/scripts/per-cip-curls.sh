@@ -57,9 +57,10 @@ def party(hint):
 
 alice = party("DemoHolderA")
 issuer = party("DemoIssuer")
+anchorer = party("DemoAnchorer")
 dso = party("DSO")
-if issuer == dso:
-    raise RuntimeError("DemoIssuer must differ from the DSO registry admin")
+if len({alice, issuer, anchorer, dso}) != 4:
+    raise RuntimeError("Demo fixture parties must have distinct roles")
 
 rows = []
 
@@ -111,36 +112,49 @@ def party_subject(body, value):
     return subject(body)["id"] == value
 
 
+def anchored_external(body, logical_id, external_issuer, subject_id):
+    credential_subject = subject(body)
+    return (exact_id(logical_id)(body) and textual_issuer(body, external_issuer)
+            and body.get("canton", {}).get("holders") == []
+            and body.get("canton", {}).get("anchorers") == [anchorer]
+            and (credential_subject.get("id") == subject_id if subject_id is not None else "id" not in credential_subject))
+
+
+def after_now(value):
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")) > datetime.datetime.now(datetime.timezone.utc)
+
+
+def before_now(value):
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")) < datetime.datetime.now(datetime.timezone.utc)
+
+
 add("#204 base", "Read a base credential with textual external issuer, absent subject ID, and empty claims.", "Does not prove that the external issuer is a Canton Party or that the credential is externally verified.", credential("urn:demo:scenario:base-credential"), lambda body: exact_id("urn:demo:scenario:base-credential")(body) and textual_issuer(body, "https://external.example/issuer") and "id" not in subject(body) and claims(body) == {})
-add("#204 external VC", "Read the external DID issuer and student subject with nested achievement and no holders.", "Does not prove verification of an external VC or control of either DID.", credential("urn:demo:scenario:external-did"), lambda body: exact_id("urn:demo:scenario:external-did")(body) and textual_issuer(body, "did:ebsi:example-issuer") and subject(body).get("id") == "did:key:example-student" and "achievement" in claims(body))
-add("#204 holderless", "Read the did:key issuer with absent subject and no holders.", "Does not prove holder delegation.", credential("urn:demo:scenario:external-holderless"), lambda body: exact_id("urn:demo:scenario:external-holderless")(body) and textual_issuer(body, "did:key:example-issuer") and "id" not in subject(body))
+add("#204 external VC", "Read the external DID issuer, student subject, nested achievement and empty Party holders with only DemoAnchorer signing.", "Does not prove verification of an external VC or control of either DID.", credential("urn:demo:scenario:external-did"), lambda body: anchored_external(body, "urn:demo:scenario:external-did", "did:ebsi:example-issuer", "did:key:example-student") and "achievement" in claims(body))
+add("#204 holderless", "Read the did:key issuer, absent subject ID, empty Party holders and sole DemoAnchorer signatory.", "Does not prove holder delegation.", credential("urn:demo:scenario:external-holderless"), lambda body: anchored_external(body, "urn:demo:scenario:external-holderless", "did:key:example-issuer", None))
 add("#204 generic profile", "Read a Party subject Alice and a different Party holder Bob.", "Does not prove that subject and holder are interchangeable.", credential("urn:demo:scenario:generic-party-profile"), lambda body: exact_id("urn:demo:scenario:generic-party-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [party("DemoHolderB")])
 add("#169 profile", "Read Alice as both Party subject and holder with cip-<nr>/ claim keys.", "Does not prove all profile claims are externally attested.", credential("urn:demo:scenario:cip169-profile"), lambda body: exact_id("urn:demo:scenario:cip169-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [alice] and any(key.startswith("cip-") for key in claims(body)))
 add("#209 names", "Read Alice's name credential by exact logical ID.", "Does not prove every name is resolvable on every network.", credential("urn:demo:name:alice.canton"), exact_id("urn:demo:name:alice.canton"))
 add("#209 resolution", "Resolve alice.canton on localnet.", "Does not prove DNS ownership or cross-network resolution.", credential_url + "/v1/resolve?" + urlencode({"name": "alice.canton", "network": "localnet"}))
-add("#249", "Read the unverified dns textual issuer and six cprp/* claim keys.", "Does not prove DNS verification or issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and textual_issuer(body, "dns") and len([key for key in claims(body) if key.startswith("cprp/")]) == 6)
-add("DID", "Read the DSO DID document advertising the cross-product services.", "Does not prove that an advertised service endpoint is reachable from this host.", did_url + "/v1/dids/dso")
-add("DID assertions", "Read the DID-side assertion for Alice's localnet alias.", "Does not prove that conflicting aliases are silently resolved.", did_url + "/v1/demo-name-assertions?" + urlencode({"alias": "urn:fqpn:localnet:demo:alice.canton"}), lambda body: isinstance(body, list) and any(item.get("subject") == alice for item in body))
 add("Reverse resolve Alice", "Reverse-resolve Alice's exact Canton Party subject ID on localnet.", "Does not prove issuer or holder IDs are valid substitutes for subject IDs.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve DID", "Reverse-resolve that same Alice subject through DID assertions.", "Does not prove that every DID alias is conflict-free.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet", "source": "did"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve unbound", "Reverse-resolve the unbound DemoIssuer Party subject ID.", "Does not prove that a 404 is expected for an unbound party; an empty array is the expected 200 response.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": issuer, "network": "localnet"}), lambda body: body == [])
+add("#249", "Read the unverified dns textual issuer and six cprp/* claim keys.", "Does not prove DNS verification or issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and textual_issuer(body, "dns") and len([key for key in claims(body) if key.startswith("cprp/")]) == 6)
+add("DID", "Read the DSO DID document advertising the cross-product services.", "Does not prove that an advertised service endpoint is reachable from this host.", did_url + "/v1/dids/dso")
+add("DID assertions", "Read the DID-side assertion for Alice's localnet alias.", "Does not prove that conflicting aliases are silently resolved.", did_url + "/v1/demo-name-assertions?" + urlencode({"alias": "urn:fqpn:localnet:demo:alice.canton"}), lambda body: isinstance(body, list) and any(item.get("subject") == alice for item in body))
 
 revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, cwd=output.parent).stdout.strip()
 dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True, cwd=output.parent).stdout.strip())
 lines = ["# Per-CIP API demonstration", "", "Generated by `demo/scripts/per-cip-curls.sh` from live curl responses. No cached PQS or prior-run bodies are used.", "", f"Captured UTC: {datetime.datetime.now(datetime.timezone.utc).isoformat()}; revision: `{revision}`; working tree dirty: `{dirty}`.", f"Credentials: `{credential_url}`; DID: `{did_url}`; ledger: `{ledger_url}`; BFT: `{os.environ.get('BFT_READER_URL', 'http://localhost:42007')}`.", "One Canton participant, one PQS and one PostgreSQL database serve both APIs. Four DID HTTP front doors proxy the one Credentials name authority; they are not independent name authorities or a name-resolution quorum.", "Historical note: the 2026-10-18 capture used the old LF HTTP contract. This run uses the VC2 projection; retained volumes from prior in-memory Canton runs are not reused.", "", "## Credentials / VC", "", "### #209 holding: no HTTP demonstration", "", "Objective: identify the boundary for `urn:demo:holding:team.canton`.", "Does not prove: that the holding is available over HTTP. `PqsCredentialQueryClient` queries the Credential and RegisteredCredential interfaces only, not the Holding interface or DemoNameHolding template. Exposing holdings over HTTP is a separate approval-dependent slice; no successful curl is claimed.", ""]
-for cip, objective, limitation, (command, status, content_type, exit_code, body, raw_body) in rows:
-    rendered = json.dumps(body, indent=2, ensure_ascii=False)
-    if json.loads(rendered) != json.loads(raw_body):
-        raise RuntimeError(f"Published JSON differs structurally from raw curl body: {cip}")
-    if "\n" not in rendered and rendered not in ("[]", "{}"):
-        raise RuntimeError(f"Published JSON is unexpectedly single-line: {cip}")
-    if any((len(line) - len(line.lstrip(" "))) % 2 for line in rendered.splitlines()):
-        raise RuntimeError(f"Published JSON has non-two-space indentation: {cip}")
-    lines.extend([f"### {cip}", "", f"Objective: {objective}", f"Does not prove: {limitation}", "", "```sh", shlex.join(command), "```", f"HTTP status: {status}", f"Content-Type: {content_type}", f"curl exit code: {exit_code}", "", "```json", rendered, "```", ""])
-output.parent.mkdir(parents=True, exist_ok=True)
 registered = capture(credential_url + "/v1/registered-credentials/" + quote("urn:demo:credential:000", safe=""))
 did_document = capture(did_url + "/v1/dids/dso")
 did_id = did_document[4]["did"]
+expected_aliases = ["urn:fqpn:localnet:demo:dso.canton"]
+def dso_did(body):
+    return (isinstance(body, dict) and body.get("did") == did_id
+            and body.get("didDocument", {}).get("id") == did_id
+            and body["didDocument"].get("alsoKnownAs") == expected_aliases)
+if not dso_did(did_document[4]):
+    raise RuntimeError("DSO DID document has an unexpected alsoKnownAs or DID")
 if did_document[4].get("did") != "did:canton:" + dso:
     raise RuntimeError("DID registry admin differs from ledger DSO")
 registry = capture(credential_url + "/v1/credential-registries")
@@ -148,6 +162,71 @@ if not any(item.get("registryId") == dso for item in registry[4].get("items", []
     raise RuntimeError("Credentials registry admin differs from ledger DSO")
 if not vc2(registered[4]):
     raise RuntimeError("Registered credential is not unsigned VC2-shaped JSON")
+
+# Every additional route is captured without projecting or truncating its response body.
+# Lists intentionally use the server's first-page defaults; they do not prove later pages.
+extra = []
+def route(label, objective, limitation, url, check, expected="200"):
+    result = capture(url, expected)
+    if not check(result[4]):
+        raise RuntimeError(f"Response failed semantic check for {label}: {url}\n{json.dumps(result[4], indent=2)}")
+    extra.append((label, objective, limitation, result))
+
+for family in ("credentials", "registered-credentials"):
+    route(f"Credentials {family} first page", f"Read the default first page of {family} records from PQS.",
+          "Pagination beyond this page or complete historical coverage.", credential_url + "/v1/" + family,
+          lambda body: isinstance(body, dict) and body.get("page") == 0 and body.get("pageSize") == 50 and isinstance(body.get("items"), list) and len(body["items"]) == 50)
+route("Credentials registry by ID", "Read the DSO credential registry using the registry ID returned by the live list.",
+      "Another registry or independent datastore.", credential_url + "/v1/credential-registries/" + quote(dso, safe=""),
+      lambda body: isinstance(body, dict) and body.get("registryId") == dso)
+for family in ("credential-events", "registered-credential-events"):
+    route(f"Credentials {family} unsupported", "Observe the actual unsupported-history response (expected HTTP 422).",
+          "Historical events or a working event-history capability.", credential_url + "/v1/" + family,
+          lambda body: isinstance(body, dict) and "event history is not supported" in body.get("error", ""), "422")
+
+expired_id = "urn:demo:scenario:expired-registration"
+intrinsic_expired = capture(credential(expired_id))
+registered_expired = capture(credential_url + "/v1/registered-credentials/" + quote(expired_id, safe=""))
+def expiry_check(body, registered_view):
+    if not (vc2(body) and exact_id(expired_id)(body)
+            and view(body).get("issuer") == issuer
+            and body.get("canton", {}).get("anchorers") == [issuer]
+            and body.get("canton", {}).get("holders") == [alice]
+            and subject(body).get("id") == alice
+            and after_now(view(body)["validUntil"])):
+        return False
+    return before_now(body["registration"]["expiresAt"]) if registered_view else "registration" not in body
+if not expiry_check(intrinsic_expired[4], False) or not expiry_check(registered_expired[4], True):
+    raise RuntimeError("Expired registration fixture does not distinguish future intrinsic validity from past registration expiry")
+extra.extend([
+    ("Expired registration intrinsic", "Read the still-future intrinsic validity of a Party-backed credential.",
+     "Current registration validity or authorization to use this credential.", intrinsic_expired),
+    ("Expired registration registered", "Read the past registration expiry beside that same still-future intrinsic validity.",
+     "The underlying intrinsic credential has expired.", registered_expired),
+])
+
+for family in ("did-registries", "credential-registries", "credentials", "asset-registries", "assets"):
+    route(f"DID discovery {family}", f"Read the DID API discovery descriptor for {family}.",
+          "Actual {family} records or reachability of a separate {family} API.", did_url + "/v1/" + family,
+          lambda body, family=family: isinstance(body, dict) and body.get("family") == family and body.get("status") == "discovery-only" and body.get("apiVersion") == "v1")
+for family in ("dids", "registered-dids"):
+    route(f"DID {family} first page", f"Read the default first page of {family} from the shared PQS.",
+          "Later pages, independent registries or complete history.", did_url + "/v1/" + family,
+          lambda body: isinstance(body, dict) and body.get("page") == 0 and body.get("pageSize") == 50 and isinstance(body.get("items"), list) and len(body["items"]) > 0)
+route("DID capabilities", "Read the DID listing and singular BFT capability declaration.",
+      "An actual collection quorum or support for all fault patterns.", did_url + "/v1/dids/capabilities",
+      lambda body: isinstance(body, dict) and body.get("bft", {}).get("singularOnly") is True)
+did_hosts = [f"http://localhost:{os.environ.get(f'DID_API_{i}_PORT', 42002 + i)}" for i in range(1, 5)]
+did_host_documents = []
+for index, host in enumerate(did_hosts, 1):
+    for family, suffix in (("dso", "/v1/dids/dso"), ("intrinsic", "/v1/dids/" + quote(did_id, safe="")),
+                           ("registered", "/v1/registered-dids/" + quote(did_id, safe=""))):
+        route(f"DID host {index} {family}", f"Read the live DSO {family} DID on host {index} and check its sole DSO alias.",
+              "Cryptographic alias ownership, Alice or Bob name allocation, or independent ledgers.", host + suffix,
+              lambda body, family=family: dso_did(body) and ("registration" in body if family == "registered" else "registration" not in body))
+        did_host_documents.append(extra[-1][3][4]["didDocument"])
+if any(document != did_host_documents[0] for document in did_host_documents[1:]):
+    raise RuntimeError("Four DID hosts disagree on intrinsic or registered DID document")
 shared_id = "urn:demo:name:alice.canton"
 credential_host_results = [capture(host + "/v1/credentials/" + quote(shared_id, safe="")) for host in credential_hosts]
 if any(not vc2(result[4]) or result[4].get("credentialId") != shared_id or result[4] != credential_host_results[0][4] for result in credential_host_results):
@@ -180,8 +259,10 @@ if os.environ.get("CREDENTIAL_BFT_ONE_FAULT") == "true":
     if credential_bft_one_fault[4].get("result") != credential_host_results[0][4] or quorum.get("agreement") != "3-of-4" or len(sources) != 4 or sources[3].get("outcome") not in ("timeout", "unavailable"):
         raise RuntimeError("Live stopped-host proof failed")
 bft = capture(os.environ.get("BFT_READER_URL", "http://localhost:42007").rstrip("/") + "/v1/bft/dids/" + quote(did_id, safe=""))
-if bft[4].get("quorum", {}).get("agreement") != "4-of-4":
-    raise RuntimeError("BFT reader did not agree 4-of-4")
+if (bft[4].get("quorum", {}).get("agreement") != "4-of-4"
+        or not dso_did(bft[4].get("result"))
+        or bft[4]["result"]["didDocument"] != did_host_documents[0]):
+    raise RuntimeError("BFT reader did not agree 4-of-4 on the sole DSO alias")
 error_url = credential_url + "/v1/credentials/" + quote("urn:demo:absent", safe="")
 missing = capture(error_url, "404")
 if missing[4].get("error") != "credential not found":
@@ -190,17 +271,18 @@ if did_id != "did:canton:" + dso:
     raise RuntimeError("DID admin mismatch")
 services = did_document[4]["didDocument"]["service"]
 lines.extend(["## DID discovery and resolution", "", f"Registry admin and DID DSO: `{dso}`; distinct issuer: `{issuer}`.", ""])
-for label, result in [("DID document", did_document), ("DID alias assertion", rows[9][3])]:
+for label, result in [("DID document", did_document), ("DID alias assertion", rows[12][3])]:
     # The same response is already shown above; retain one body only.
     lines.extend([f"{label}: verified HTTP {result[1]} at `{result[0][-1]}`; full response in Credentials / VC above.", ""])
 forward = next(item for item in services if item["id"] == did_id + "#name-resolution")
 reverse = next(item for item in services if item["id"] == did_id + "#reverse-name-resolution")
 probes = []
-for service, kind, path in [(forward, "CantonDemoNameResolutionService", "resolve"), (reverse, "CantonDemoReverseNameResolutionService", "reverse-resolve")]:
-    endpoints = service["serviceEndpoint"]["endpoints"]
-    if service["type"] != kind or service["serviceEndpoint"]["version"] != "1.0" or len(endpoints) != 4:
-        raise RuntimeError(f"Invalid advertised {kind} service")
-    for index, endpoint in enumerate(endpoints):
+for index in range(4):
+    for service, kind, path in [(forward, "CantonDemoNameResolutionService", "resolve"), (reverse, "CantonDemoReverseNameResolutionService", "reverse-resolve")]:
+        endpoints = service["serviceEndpoint"]["endpoints"]
+        if service["type"] != kind or service["serviceEndpoint"]["version"] != "1.0" or len(endpoints) != 4:
+            raise RuntimeError(f"Invalid advertised {kind} service")
+        endpoint = endpoints[index]
         advertised = f"http://localhost:{42003 + index}/v1/{path}"
         if endpoint["priority"] != index or endpoint["uri"] != advertised:
             raise RuntimeError(f"Incorrect advertised {kind} endpoint: {endpoint}")
@@ -247,7 +329,21 @@ for label, result in [("Registry", registry), ("Registered credential (VC2)", re
     rendered = json.dumps(body, indent=2, ensure_ascii=False)
     if json.loads(rendered) != json.loads(raw_body) or ("\n" not in rendered and rendered not in ("[]", "{}")) or any((len(line) - len(line.lstrip(" "))) % 2 for line in rendered.splitlines()):
         raise RuntimeError(f"Response failed raw-body/indentation validation: {label}")
-    lines.extend([f"### {label}", "", "```sh", shlex.join(command), "```", f"HTTP status: {status}; Content-Type: {content_type}; curl exit code: {exit_code}", "", "```json", rendered, "```", ""])
+    lines.extend([f"### {label}", "", "Objective: observe the live status and full body for this shared demo GET.", "Does not prove: independent ledgers, external identity verification or unobserved routes.", "", "```sh", shlex.join(command), "```", f"HTTP status: {status}; Content-Type: {content_type}; curl exit code: {exit_code}", "", "```json", rendered, "```", ""])
+def render_result(label, objective, limitation, result):
+    command, status, content_type, exit_code, body, raw_body = result
+    rendered = json.dumps(body, indent=2, ensure_ascii=False)
+    if json.loads(rendered) != json.loads(raw_body) or ("\n" not in rendered and rendered not in ("[]", "{}")) or any((len(line) - len(line.lstrip(" "))) % 2 for line in rendered.splitlines()):
+        raise RuntimeError(f"Response failed raw-body/indentation validation: {label}")
+    return [f"### {label}", "", f"Objective: {objective}", f"Does not prove: {limitation}", "", "```sh", shlex.join(command), "```", f"HTTP status: {status}", f"Content-Type: {content_type}", f"curl exit code: {exit_code}", "", "```json", rendered, "```", ""]
+
+# Insert the new route records after the existing scenarios, retaining their original order.
+scenario_lines = []
+for cip, objective, limitation, result in rows:
+    scenario_lines.extend(render_result(cip, objective.removeprefix("Objective: "), limitation.removeprefix("Does not prove: "), result))
+marker = "## DID discovery and resolution"
+position = lines.index(marker)
+lines[position:position] = scenario_lines + ["## Additional exposed GET routes and fixture contrast", ""] + [line for label, objective, limitation, result in extra for line in render_result(label, objective, limitation, result)]
 output.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
-print(f"Wrote {output}: 13 scenarios, 8 successful DID proxy calls, 8 conflict/missing probes, 4 unique shared checks")
+print(f"Wrote {output}: 13 scenarios, {len(extra) - 2} newly covered GET patterns, 2 expiry views, 8 successful DID proxy calls, 8 conflict/missing probes")
 PY

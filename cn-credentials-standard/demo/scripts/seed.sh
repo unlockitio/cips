@@ -30,19 +30,29 @@ party_for_hint() {
 issuer=$(party_for_hint DemoIssuer)
 holder_a=$(party_for_hint DemoHolderA)
 holder_b=$(party_for_hint DemoHolderB)
-registry_admin=$(party_for_hint DemoRegistryAdmin)
+anchorer=$(party_for_hint DemoAnchorer)
+registry_admin=$(party_for_hint DSO)
+legacy_admin=$(party_for_hint DemoRegistryAdmin)
+if [ -n "$legacy_admin" ]; then
+  printf '%s\n' "Legacy DemoRegistryAdmin party exists; refusing to migrate retained volumes to DSO. Use a fresh isolated project with fresh volumes." >&2
+  exit 1
+fi
 
 script_name=Canton.Network.Credentials.Seed:main
 args=
-if [ -n "$issuer" ] || [ -n "$holder_a" ] || [ -n "$holder_b" ] || [ -n "$registry_admin" ]; then
+if [ -n "$issuer" ] || [ -n "$holder_a" ] || [ -n "$holder_b" ] || [ -n "$anchorer" ] || [ -n "$registry_admin" ]; then
   [ -n "$issuer" ] && [ -n "$holder_a" ] && [ -n "$holder_b" ] && [ -n "$registry_admin" ] || {
     printf '%s\n' "Credential seed parties are partially allocated; refusing to guess identities." >&2
     exit 1
   }
+  [ -n "$anchorer" ] || {
+    printf '%s\n' "DemoAnchorer is absent from a retained seed; use a fresh isolated project with fresh volumes." >&2
+    exit 1
+  }
   script_name=Canton.Network.Credentials.Seed:resume
   args="--input-file /tmp/credential-seed-input.json"
-  printf '{"issuer":"%s","holderA":"%s","holderB":"%s","registryAdmin":"%s"}\n' \
-    "$issuer" "$holder_a" "$holder_b" "$registry_admin" > /tmp/credential-seed-input.json
+  printf '{"issuer":"%s","holderA":"%s","holderB":"%s","anchorer":"%s","registryAdmin":"%s"}\n' \
+    "$issuer" "$holder_a" "$holder_b" "$anchorer" "$registry_admin" > /tmp/credential-seed-input.json
 fi
 
 # Daml Script accepts the optional party input for reruns; shell expansion is intentional.

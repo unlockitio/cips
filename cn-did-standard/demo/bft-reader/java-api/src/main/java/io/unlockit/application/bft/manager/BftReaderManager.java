@@ -122,7 +122,7 @@ public class BftReaderManager {
             throw discoveryError("Bootstrap did not return the local DSO DID");
         }
         JsonNode services = record.path("didDocument").path("service");
-        if (!services.isArray() || services.size() != FAMILIES.size()) throw discoveryError("DSO DID must advertise exactly six services");
+        if (!services.isArray() || services.size() < FAMILIES.size()) throw discoveryError("DSO DID must advertise the six trusted services");
         Map<String, URI> origins = parseOriginMap();
         Map<String, List<TrustedEndpoint>> endpoints = new LinkedHashMap<>();
         List<String> allAdvertised = new ArrayList<>();

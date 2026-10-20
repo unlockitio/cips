@@ -34,6 +34,16 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
        order by c.payload ->> 'id', c.contract_id
        limit 2
       """;
+  static final String FIND_ACTIVE_NAMES_SQL = """
+      select c.contract_id, c.payload as credential_payload
+        from active(?) c
+       where c.payload -> 'credentialTypes' @> '["DemoPartyName"]'::jsonb
+         and c.payload -> 'credentialSubject' -> 'hd' -> 'id' ->> 'tag' = 'W3C_VC_Identifier_Party'
+         and (?::text is null or c.payload -> 'credentialSubject' -> 'hd' -> 'claims'
+              -> 'demo.example/name' ->> 'value' = ?::text)
+         and (?::text is null or c.payload -> 'credentialSubject' -> 'hd' -> 'id' ->> 'value' = ?::text)
+       order by c.contract_id
+      """;
   static final String FIND_CREDENTIAL_PAGE_SQL = """
       select c.contract_id, c.payload as credential_payload
         from active(?) c
@@ -85,6 +95,17 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
           statement.setString(1, CREDENTIAL_INTERFACE);
           statement.setString(2, credentialId);
         });
+  }
+
+  @Override
+  public List<Credential> findActiveNames(String name, String party) {
+    return queryCredentials(FIND_ACTIVE_NAMES_SQL, statement -> {
+      statement.setString(1, CREDENTIAL_INTERFACE);
+      statement.setString(2, name);
+      statement.setString(3, name);
+      statement.setString(4, party);
+      statement.setString(5, party);
+    });
   }
 
   @Override
@@ -164,7 +185,7 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
   @Override
   public long latestOffset() {
     try (Connection connection = dataSource.getConnection();
-        PreparedStatement statement = connection.prepareStatement("select set_latest(NULL)");
+        PreparedStatement statement = connection.prepareStatement("select set_latest(latest_offset())");
         ResultSet rows = statement.executeQuery()) {
       if (!rows.next()) throw new SQLException("PQS did not select a latest offset");
       long offset = rows.getLong(1);
@@ -189,8 +210,8 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
   static String historySource(String state) {
     return switch (state) {
       case "active" -> "active(?::text, ?::bigint)";
-      case "archived" -> "archives(?::text, 0::bigint, ?::bigint)";
-      case "all" -> "creates(?::text, 0::bigint, ?::bigint)";
+      case "archived" -> "archives(?::text, oldest_offset(), ?::bigint)";
+      case "all" -> "creates(?::text, oldest_offset(), ?::bigint)";
       default -> throw new IllegalArgumentException("Invalid lifecycle state");
     };
   }
@@ -198,7 +219,7 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
   static String historySql(boolean registered, String state, boolean singular) {
     String source = historySource(state);
     return "with credentials as (select * from " + source + "), "
-        + "archived as (select * from archives(?::text, 0::bigint, ?::bigint))"
+        + "archived as (select * from archives(?::text, oldest_offset(), ?::bigint))"
         + (registered ? ", registrations as (select * from " + source + ")" : "")
         + " select c.contract_id, c.payload as credential_payload, c.template_fqn, c.payload_type,"
         + " c.create_event_pk, c.create_event_id, c.created_at_ix, c.created_at_offset, c.created_effective_at,"

@@ -19,6 +19,9 @@ class PqsDidQueryClientTest {
     private static final String DOCUMENT = """
             {"id":{"value":"did:example:alice"},"services":[{"id":{"value":"did:example:alice#dids"},"serviceType":{"value":"CantonDidResolutionService"},"serviceEndpoint":{"version":"1.0","endpoints":{"hd":{"uri":{"value":"http://localhost:42003/v1/dids"},"priority":"0"},"tl":[{"uri":{"value":"http://localhost:42004/v1/dids"},"priority":"1"},{"uri":{"value":"http://localhost:42005/v1/dids"},"priority":"2"},{"uri":{"value":"http://localhost:42006/v1/dids"},"priority":"3"}]}}}],"controllers":{"hd":{"value":"did:example:alice"},"tl":[]},"verificationMethods":[],"verificationRelationships":{"authentication":[],"assertionMethod":[],"capabilityInvocation":[]}}
             """;
+    private static final String DEMO_TEMPLATE = """
+            {"owner":"DSO::1220-test","document":%s,"registration":{"registryAdmin":"DSO::1220-test"},"aliases":[{"alias":"urn:fqpn:localnet:demo:dso.canton","subject":"DSO::1220-test"},{"alias":"urn:fqpn:localnet:demo:dso.canton","subject":"DSO::1220-test"},{"alias":"urn:fqpn:localnet:demo:alice.canton","subject":"Alice::1220-test"},{"alias":"urn:fqpn:localnet:demo:bob.canton","subject":"DSO::1220-test"}]}
+            """.formatted(DOCUMENT.replace("did:example:alice", "did:canton:DSO::1220-test"));
     private static final String REGISTERED = """
             {"document":%s,"registration":{"registryAdmin":"DidDemoAlice::1220-test","registeredAt":"2026-09-21T00:00:00Z","updatedAt":"2026-09-21T00:00:00Z","versionId":"demo-version-1","deactivated":false,"deactivatedAt":null,"source":"canton-ledger-pqs-demo","integrityEvidence":"demo-unverified-integrity-evidence","finalityEvidence":"demo-no-authoritative-finality","meta":{}}}
             """.formatted(DOCUMENT);
@@ -26,7 +29,7 @@ class PqsDidQueryClientTest {
     @Test
     void mapsIntrinsicAndRegisteredShapesSeparately() throws Exception {
         var client = new PqsDidQueryClient(null, new ObjectMapper());
-        var intrinsic = client.mapIntrinsic("cid", DOCUMENT);
+        var intrinsic = client.mapIntrinsic("cid", DOCUMENT, null);
         assertEquals("cid", intrinsic.contractId());
         assertEquals("did:example:alice", intrinsic.id().value());
         assertEquals(4, intrinsic.document().service().getFirst().endpoints().size());
@@ -35,7 +38,7 @@ class PqsDidQueryClientTest {
         assertEquals(1, intrinsic.document().service().getFirst().endpoints().get(1).priority());
         assertEquals("http://localhost:42005/v1/dids",
                 intrinsic.document().service().getFirst().endpoints().get(2).uri().toString());
-        var registered = client.mapRegistered("cid", DOCUMENT, REGISTERED);
+        var registered = client.mapRegistered("cid", DOCUMENT, REGISTERED, null);
         assertEquals("DidDemoAlice::1220-test", registered.registration().registryAdmin());
         assertEquals("cid", registered.intrinsic().contractId());
         for (var document : java.util.List.of(intrinsic.document(), registered.intrinsic().document())) {
@@ -50,10 +53,44 @@ class PqsDidQueryClientTest {
     }
 
     @Test
+    void projectsOnlySeededDsoSelfClaimAcrossBothViewsAndRejectsStaleJoins() throws Exception {
+        var client = new PqsDidQueryClient(null, new ObjectMapper());
+        String dsoDocument = DOCUMENT.replace("did:example:alice", "did:canton:DSO::1220-test");
+        String dsoRegistration = REGISTERED.replace("did:example:alice", "did:canton:DSO::1220-test");
+        var intrinsic = client.mapIntrinsic("cid", dsoDocument, DEMO_TEMPLATE);
+        var registered = client.mapRegistered("cid", dsoDocument, dsoRegistration, DEMO_TEMPLATE);
+        var expected = java.util.List.of("urn:fqpn:localnet:demo:dso.canton");
+        assertEquals(expected, intrinsic.document().alsoKnownAs());
+        assertEquals(expected, registered.intrinsic().document().alsoKnownAs());
+        assertEquals(expected, io.unlockit.application.did.mapper.DidRepresentationMapper.toRepresentation(intrinsic)
+                .didDocument().alsoKnownAs());
+        assertEquals(expected, io.unlockit.application.did.mapper.DidRepresentationMapper.toRepresentation(registered)
+                .didDocument().alsoKnownAs());
+        assertEquals(java.util.List.of(), client.mapIntrinsic("cid", dsoDocument,
+                DEMO_TEMPLATE.replace("urn:fqpn:localnet:demo:dso.canton", "urn:fqpn:localnet:demo:bob.canton"))
+                .document().alsoKnownAs());
+        assertThrows(java.sql.SQLException.class, () -> client.mapIntrinsic("cid", dsoDocument,
+                DEMO_TEMPLATE.replace("\"owner\":\"DSO::1220-test\"", "\"owner\":\"Other::1220-test\"")));
+        assertThrows(java.sql.SQLException.class, () -> client.mapIntrinsic("cid", dsoDocument,
+                DEMO_TEMPLATE.replace("\"document\":", "\"staleDocument\":")));
+        ResultSet history = mock(ResultSet.class);
+        when(history.getString("contract_id")).thenReturn("cid");
+        when(history.getString("document_payload")).thenReturn(dsoDocument);
+        when(history.getString("registration_payload")).thenReturn(dsoRegistration);
+        when(history.getString("template_payload")).thenReturn(DEMO_TEMPLATE);
+        var historyClient = new PqsDidQueryClient(null, new ObjectMapper().findAndRegisterModules());
+        for (boolean registeredHistory : new boolean[] {false, true}) {
+            var item = historyClient.mapHistory(history, registeredHistory);
+            assertEquals("urn:fqpn:localnet:demo:dso.canton",
+                    item.path("didDocument").path("alsoKnownAs").get(0).asText());
+        }
+    }
+
+    @Test
     void rejectsMismatchedJoinedPayloads() {
         var client = new PqsDidQueryClient(null, new ObjectMapper());
         assertThrows(java.sql.SQLException.class,
-                () -> client.mapRegistered("cid", DOCUMENT, REGISTERED.replace("did:example:alice", "did:example:bob")));
+                () -> client.mapRegistered("cid", DOCUMENT, REGISTERED.replace("did:example:alice", "did:example:bob"), null));
     }
 
     @Test
@@ -73,10 +110,12 @@ class PqsDidQueryClientTest {
         client.findIntrinsicByDid("did:example:alice");
         client.findRegisteredByDid("did:example:alice");
         verify(intrinsic).setString(1, PqsDidQueryClient.DID_DOCUMENT_INTERFACE);
-        verify(intrinsic).setString(2, "did:example:alice");
+        verify(intrinsic).setString(2, PqsDidQueryClient.DEMO_DID_DOCUMENT_TEMPLATE);
+        verify(intrinsic).setString(3, "did:example:alice");
         verify(registered).setString(1, PqsDidQueryClient.DID_DOCUMENT_INTERFACE);
         verify(registered).setString(2, PqsDidQueryClient.REGISTERED_DID_DOCUMENT_INTERFACE);
-        verify(registered).setString(3, "did:example:alice");
+        verify(registered).setString(3, PqsDidQueryClient.DEMO_DID_DOCUMENT_TEMPLATE);
+        verify(registered).setString(4, "did:example:alice");
     }
 
     @Test
@@ -84,18 +123,23 @@ class PqsDidQueryClientTest {
         for (String state : java.util.List.of("active", "archived", "all")) {
             String source = switch (state) {
                 case "active" -> "active(?::text, ?::bigint)";
-                case "archived" -> "archives(?::text, 0::bigint, ?::bigint)";
-                default -> "creates(?::text, 0::bigint, ?::bigint)";
+                case "archived" -> "archives(?::text, oldest_offset(), ?::bigint)";
+                default -> "creates(?::text, oldest_offset(), ?::bigint)";
             };
             for (boolean registered : new boolean[] {false, true}) {
-                String expected = "with documents as (select * from " + source + "), archived as (select * from archives(?::text, 0::bigint, ?::bigint))"
+                String expected = "with documents as (select * from " + source + "), archived as (select * from archives(?::text, oldest_offset(), ?::bigint))"
                         + (registered ? ", registrations as (select * from " + source + ")" : "")
                         + " select d.contract_id, d.payload as document_payload, d.template_fqn, d.payload_type, d.create_event_pk, d.create_event_id, d.created_at_ix, d.created_at_offset, d.created_effective_at, a.archive_event_pk, a.archive_event_id, a.archived_at_ix, a.archived_at_offset, a.archived_effective_at"
                         + (registered ? ", r.payload as registration_payload" : "")
-                        + " from documents d left join archived a on d.contract_id = a.contract_id and d.create_event_id = a.create_event_id and d.created_at_offset = a.created_at_offset"
+                        + ", t.payload as template_payload"
+                         + " from documents d left join archived a on d.contract_id = a.contract_id and d.create_event_id = a.create_event_id and d.created_at_offset = a.created_at_offset"
                         + (registered ? " join registrations r on d.contract_id = r.contract_id and d.create_event_id = r.create_event_id and d.created_at_offset = r.created_at_offset and d.created_at_ix = r.created_at_ix"
                             + (state.equals("archived") ? " and d.archive_event_id = r.archive_event_id and d.archived_at_offset = r.archived_at_offset" : "") : "")
-                        + " where (?::text is null or (d.payload -> 'id' ->> 'value', d.contract_id) > (?::text, ?::text))"
+                        + " left join " + source + " t on t.contract_id = d.contract_id"
+                         + " and t.create_event_id = d.create_event_id and t.created_at_offset = d.created_at_offset"
+                         + " and t.created_at_ix = d.created_at_ix"
+                         + (state.equals("archived") ? " and t.archive_event_id = d.archive_event_id and t.archived_at_offset = d.archived_at_offset" : "")
+                         + " where (?::text is null or (d.payload -> 'id' ->> 'value', d.contract_id) > (?::text, ?::text))"
                         + " and (?::timestamptz is null or d.created_effective_at >= ?::timestamptz)"
                         + " and (?::timestamptz is null or d.created_effective_at < ?::timestamptz)"
                         + " and (?::timestamptz is null or a.archived_effective_at >= ?::timestamptz)"
@@ -120,8 +164,10 @@ class PqsDidQueryClientTest {
                     verify(statement).setString(5, PqsDidQueryClient.REGISTERED_DID_DOCUMENT_INTERFACE);
                     verify(statement).setLong(6, 9000000000L);
                 }
-                verify(statement).setInt(registered ? 20 : 16, 51);
-                verify(statement).setLong(registered ? 21 : 17, 100L);
+                verify(statement).setString(registered ? 7 : 5, PqsDidQueryClient.DEMO_DID_DOCUMENT_TEMPLATE);
+                verify(statement).setLong(registered ? 8 : 6, 9000000000L);
+                verify(statement).setInt(registered ? 22 : 18, 51);
+                verify(statement).setLong(registered ? 23 : 19, 100L);
             }
         }
     }
@@ -171,6 +217,7 @@ class PqsDidQueryClientTest {
         when(rows.getString("contract_id")).thenReturn("cid");
         when(rows.getString("document_payload")).thenReturn(DOCUMENT);
         when(rows.getString("registration_payload")).thenReturn(REGISTERED);
+        when(rows.getString("template_payload")).thenReturn(null);
         when(rows.getObject("archived_at_offset")).thenReturn(9000000001L);
         for (String name : java.util.List.of("template_fqn", "payload_type", "create_event_id", "archive_event_id"))
             when(rows.getString(name)).thenReturn(name);
@@ -206,11 +253,13 @@ class PqsDidQueryClientTest {
         Connection connection = mock(Connection.class);
         PreparedStatement statement = mock(PreparedStatement.class);
         when(source.getConnection()).thenReturn(connection);
-        when(connection.prepareStatement("select d.contract_id, d.payload as document_payload from active(?) d"
+        when(connection.prepareStatement("select d.contract_id, d.payload as document_payload, t.payload as template_payload"
+                + " from active(?) d left join active(?) t on t.contract_id = d.contract_id"
                 + " where d.payload -> 'id' ->> 'value' like 'did:canton:DSO::%' order by d.contract_id limit 2")).thenReturn(statement);
         when(statement.executeQuery()).thenReturn(mock(ResultSet.class));
         assertTrue(new PqsDidQueryClient(source, new ObjectMapper()).findDsoCandidates().isEmpty());
         verify(statement).setString(1, PqsDidQueryClient.DID_DOCUMENT_INTERFACE);
+        verify(statement).setString(2, PqsDidQueryClient.DEMO_DID_DOCUMENT_TEMPLATE);
     }
 
     @Test
@@ -221,7 +270,7 @@ class PqsDidQueryClientTest {
         PreparedStatement validate = mock(PreparedStatement.class);
         ResultSet rows = mock(ResultSet.class);
         when(source.getConnection()).thenReturn(connection);
-        when(connection.prepareStatement("select set_latest(NULL)")).thenReturn(latest);
+        when(connection.prepareStatement("select set_latest(latest_offset())")).thenReturn(latest);
         when(connection.prepareStatement("select validate_offset_exists(?::bigint)")).thenReturn(validate);
         when(latest.executeQuery()).thenReturn(rows);
         when(rows.next()).thenReturn(true);
@@ -241,7 +290,7 @@ class PqsDidQueryClientTest {
     @Test
     void sqlUsesActiveInterfacesOrderingAndBoundedPages() {
         assertTrue(PqsDidQueryClient.FIND_INTRINSIC_PAGE_SQL.contains("active(?)"));
-        assertFalse(PqsDidQueryClient.FIND_INTRINSIC_PAGE_SQL.contains("join"));
+        assertTrue(PqsDidQueryClient.FIND_INTRINSIC_PAGE_SQL.contains("left join active(?) t on t.contract_id = d.contract_id"));
         assertTrue(PqsDidQueryClient.FIND_REGISTERED_PAGE_SQL.contains("join active(?)"));
         assertTrue(PqsDidQueryClient.FIND_REGISTERED_PAGE_SQL.contains("d.contract_id"));
         assertTrue(PqsDidQueryClient.FIND_REGISTERED_PAGE_SQL.contains("limit ? offset ?"));

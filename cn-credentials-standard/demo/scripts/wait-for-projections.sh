@@ -3,7 +3,9 @@ set -eu
 
 CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential'
 REGISTERED_CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential'
-CREDENTIAL_EXPECTED=${CREDENTIAL_SEED_COUNT:-360}
+# 360 deterministic records plus seven seeded CIP scenarios and two name credentials.
+# The separate Holding template is not projected as a Credential interface.
+CREDENTIAL_EXPECTED=${CREDENTIAL_SEED_COUNT:-369}
 TIMEOUT=${PROJECTION_TIMEOUT_SECONDS:-300}
 started=$(date +%s)
 
@@ -13,10 +15,11 @@ while :; do
 
   expected="$CREDENTIAL_EXPECTED|$CREDENTIAL_EXPECTED|$CREDENTIAL_EXPECTED"
   if [ "$result" = "$expected" ]; then
-    snapshot=$(psql -X -v ON_ERROR_STOP=1 -At -c 'select set_latest(NULL)')
+    # PQS 3.5.8 set_latest(NULL) yields NULL, so pin the session snapshot to latest_offset().
+    snapshot=$(psql -X -v ON_ERROR_STOP=1 -At -c 'select set_latest(latest_offset())')
     psql -X -v ON_ERROR_STOP=1 -c "select validate_offset_exists($snapshot::bigint)" >/dev/null
     for interface in "$CREDENTIAL_INTERFACE" "$REGISTERED_CREDENTIAL_INTERFACE"; do
-      for reader in "active('$interface', $snapshot::bigint)" "creates('$interface', 0::bigint, $snapshot::bigint)" "archives('$interface', 0::bigint, $snapshot::bigint)"; do
+      for reader in "active('$interface', $snapshot::bigint)" "creates('$interface', oldest_offset(), $snapshot::bigint)" "archives('$interface', oldest_offset(), $snapshot::bigint)"; do
         psql -X -v ON_ERROR_STOP=1 -c "select contract_id,payload,template_fqn,payload_type,create_event_pk,create_event_id,created_at_ix,created_at_offset,created_effective_at,archive_event_pk,archive_event_id,archived_at_ix,archived_at_offset,archived_effective_at from $reader limit 0" >/dev/null
       done
     done

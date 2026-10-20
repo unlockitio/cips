@@ -3,6 +3,8 @@ package io.unlockit.application.credential.api;
 import io.unlockit.application.credential.dto.ErrorResponse;
 import io.unlockit.domain.credential.exception.CredentialNotFoundException;
 import io.unlockit.domain.credential.exception.CredentialRegistryNotFoundException;
+import io.unlockit.domain.credential.exception.DidAssertionConflictException;
+import io.unlockit.domain.credential.exception.DidUnavailableException;
 import io.unlockit.domain.credential.exception.DuplicateCredentialException;
 import io.unlockit.domain.credential.exception.InvalidPaginationException;
 import io.unlockit.domain.credential.exception.PqsUnavailableException;
@@ -26,8 +28,12 @@ public class CredentialExceptionMapper implements ExceptionMapper<RuntimeExcepti
         || exception instanceof CredentialRegistryNotFoundException) {
       return response(Response.Status.NOT_FOUND, exception.getMessage());
     }
-    if (exception instanceof DuplicateCredentialException) {
+    if (exception instanceof DuplicateCredentialException
+        || exception instanceof DidAssertionConflictException) {
       return response(Response.Status.CONFLICT, exception.getMessage());
+    }
+    if (exception instanceof DidUnavailableException) {
+      return response(Response.Status.SERVICE_UNAVAILABLE, "DID assertion lookup failed");
     }
     if (exception instanceof UnsupportedCapabilityException) {
       return response(422, exception.getMessage());

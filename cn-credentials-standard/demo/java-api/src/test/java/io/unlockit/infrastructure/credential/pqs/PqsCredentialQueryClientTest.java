@@ -49,15 +49,63 @@ class PqsCredentialQueryClientTest {
     var mapper = new io.unlockit.application.credential.mapper.CredentialResponseMapper();
     var response = mapper.toResponse(registered);
     var json = new ObjectMapper().valueToTree(response);
-    assertEquals("W3C_VC_Identifier", json.at("/credential/issuer/tag").asText());
-    assertEquals("https://external.example/issuer", json.at("/credential/issuer/value").asText());
-    assertTrue(json.at("/credential/holders").isArray());
-    assertEquals(0, json.at("/credential/holders").size());
-    assertEquals("anchor", json.at("/credential/anchorers/hd").asText());
-    assertEquals(0, json.at("/credential/anchorers/tl").size());
+    assertEquals("https://www.w3.org/ns/credentials/v2", json.at("/credential/@context/0").asText());
+    assertEquals("VerifiableCredential", json.at("/credential/type/0").asText());
+    assertEquals("https://external.example/issuer", json.at("/credential/issuer").asText());
+    assertTrue(json.at("/canton/holders").isArray());
+    assertEquals(0, json.at("/canton/holders").size());
+    assertEquals("anchor", json.at("/canton/anchorers/0").asText());
+    assertEquals(1, json.at("/canton/anchorers").size());
+    assertFalse(json.at("/credential/credentialSubject/0").has("id"));
+    assertTrue(json.at("/credential").has("validFrom"));
     assertEquals("active", json.path("lifecycleState").asText());
     assertEquals("2026-09-18T00:00:00Z", json.at("/registration/registeredAt").asText());
     assertEquals(mapper.toResponse(registered.credential()).credential(), response.credential());
+  }
+
+  @Test
+  void recursivelyProjectsEveryAnyValueAndMultipleSubjectsWithoutInventingIdentifiers() throws Exception {
+    var client = new PqsCredentialQueryClient(null, new ObjectMapper());
+    var payload = CREDENTIAL.replace("\"credentialTypes\":[\"VerifiableCredential\"]",
+        "\"credentialTypes\":[\"VerifiableCredential\",\"DemoCredential\"]")
+        .replace("\"credentialSubject\":[{\"id\":null,\"claims\":{}}]", """
+            "credentialSubject":[{"id":null,"claims":{"nested":{"tag":"AV_Map","value":{"label":{"tag":"AV_Text","value":"hello"},"list":{"tag":"AV_List","value":[{"tag":"AV_Int","value":"9007199254740993"},{"tag":"AV_Decimal","value":"1234567890.1234567890"},{"tag":"AV_Bool","value":true},{"tag":"AV_Date","value":"2021-03-18"},{"tag":"AV_Time","value":"2021-03-18T00:00:00Z"},{"tag":"AV_RelTime","value":"604800000000"},{"tag":"AV_Party","value":"party"},{"tag":"AV_ContractId","value":"cid"}]}}}}},{"id":{"tag":"W3C_VC_Identifier_Party","value":"subject-party"},"claims":{"name":{"tag":"AV_Text","value":"Alice"}}}]
+            """);
+    var mapper = new io.unlockit.application.credential.mapper.CredentialResponseMapper();
+    var json = new ObjectMapper().valueToTree(mapper.toResponse(client.mapCredential("cid", payload)));
+    var subjects = json.at("/credential/credentialSubject");
+    assertEquals(2, subjects.size());
+    assertFalse(subjects.get(0).has("id"));
+    assertEquals("subject-party", subjects.get(1).path("id").asText());
+    assertEquals("Alice", subjects.get(1).path("name").asText());
+    assertEquals("hello", subjects.get(0).at("/nested/label").asText());
+    var list = subjects.get(0).at("/nested/list");
+    assertEquals("9007199254740993", list.get(0).asText());
+    assertEquals(0, new java.math.BigDecimal("1234567890.1234567890").compareTo(list.get(1).decimalValue()));
+    assertTrue(list.get(1).isNumber());
+    assertTrue(list.get(2).booleanValue());
+    assertEquals("2021-03-18", list.get(3).asText());
+    assertEquals("2021-03-18T00:00:00Z", list.get(4).asText());
+    assertEquals("PT168H", list.get(5).asText());
+    assertEquals("party", list.get(6).asText());
+    assertEquals("cid", list.get(7).asText());
+    assertFalse(json.at("/credential").has("credentialTypes"));
+  }
+
+  @Test
+  void rejectsMissingVcTypeReservedClaimAndUnknownVariant() throws Exception {
+    var client = new PqsCredentialQueryClient(null, new ObjectMapper());
+    var mapper = new io.unlockit.application.credential.mapper.CredentialResponseMapper();
+    org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+        () -> mapper.toResponse(client.mapCredential("cid", CREDENTIAL.replace("VerifiableCredential", "DemoCredential"))));
+    for (String key : new String[] {"id", "type", "@context"}) {
+      var payload = CREDENTIAL.replace("\"claims\":{}", "\"claims\":{\"" + key + "\":{\"tag\":\"AV_Text\",\"value\":\"bad\"}}");
+      org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+          () -> mapper.toResponse(client.mapCredential("cid", payload)));
+    }
+    var unknown = CREDENTIAL.replace("\"claims\":{}", "\"claims\":{\"x\":{\"tag\":\"AV_Unknown\",\"value\":\"bad\"}}");
+    org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+        () -> mapper.toResponse(client.mapCredential("cid", unknown)));
   }
 
   @Test
@@ -75,6 +123,29 @@ class PqsCredentialQueryClientTest {
 
     verify(statement).setString(1, PqsCredentialQueryClient.CREDENTIAL_INTERFACE);
     verify(statement).setString(2, "credential");
+  }
+
+  @Test
+  void queriesActiveNameCredentialsWithExactClaimAndPartyFilters() throws Exception {
+    AgroalDataSource dataSource = mock(AgroalDataSource.class);
+    Connection connection = mock(Connection.class);
+    PreparedStatement statement = mock(PreparedStatement.class);
+    ResultSet rows = mock(ResultSet.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.prepareStatement(PqsCredentialQueryClient.FIND_ACTIVE_NAMES_SQL)).thenReturn(statement);
+    when(statement.executeQuery()).thenReturn(rows);
+    when(rows.next()).thenReturn(false);
+
+    var client = new PqsCredentialQueryClient(dataSource, new ObjectMapper());
+    client.findActiveNames("alice.canton", null);
+    verify(statement).setString(1, PqsCredentialQueryClient.CREDENTIAL_INTERFACE);
+    verify(statement).setString(2, "alice.canton");
+    verify(statement).setString(3, "alice.canton");
+    verify(statement).setString(4, null);
+    verify(statement).setString(5, null);
+    assertTrue(PqsCredentialQueryClient.FIND_ACTIVE_NAMES_SQL.contains("from active(?)"));
+    assertTrue(PqsCredentialQueryClient.FIND_ACTIVE_NAMES_SQL.contains("'demo.example/name'"));
+    assertTrue(PqsCredentialQueryClient.FIND_ACTIVE_NAMES_SQL.contains("'W3C_VC_Identifier_Party'"));
   }
 
   @Test
@@ -127,8 +198,8 @@ class PqsCredentialQueryClientTest {
   @Test
   void historySqlUsesSnapshotFunctionsCompatibleEventsAndAllFilters() {
     assertEquals("active(?::text, ?::bigint)", PqsCredentialQueryClient.historySource("active"));
-    assertEquals("archives(?::text, 0::bigint, ?::bigint)", PqsCredentialQueryClient.historySource("archived"));
-    assertEquals("creates(?::text, 0::bigint, ?::bigint)", PqsCredentialQueryClient.historySource("all"));
+    assertEquals("archives(?::text, oldest_offset(), ?::bigint)", PqsCredentialQueryClient.historySource("archived"));
+    assertEquals("creates(?::text, oldest_offset(), ?::bigint)", PqsCredentialQueryClient.historySource("all"));
     for (String state : java.util.List.of("active", "archived", "all")) {
       String sql = PqsCredentialQueryClient.historySql(true, state, false);
       for (String fragment : java.util.List.of("c.create_event_id = r.create_event_id",
@@ -192,7 +263,7 @@ class PqsCredentialQueryClientTest {
     var statement = mock(PreparedStatement.class);
     var rows = mock(ResultSet.class);
     when(source.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement("select set_latest(NULL)")).thenReturn(statement);
+    when(connection.prepareStatement("select set_latest(latest_offset())")).thenReturn(statement);
     when(statement.executeQuery()).thenReturn(rows);
     when(rows.next()).thenReturn(true);
     when(rows.getLong(1)).thenReturn(9007199254740993L);

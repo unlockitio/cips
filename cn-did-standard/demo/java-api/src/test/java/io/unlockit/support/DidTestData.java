@@ -39,7 +39,7 @@ public final class DidTestData {
 
     private static IntrinsicDid intrinsic(String label) {
         DidValue id = new DidValue("did:example:" + label);
-        DidDocument document = new DidDocument(id, List.of(id), List.of(),
+        DidDocument document = new DidDocument(id, List.of(), List.of(id), List.of(),
                 new VerificationRelationships(List.of(), List.of(), List.of(), List.of(), List.of()),
                 List.of(new ServiceEntry(id + "#dids", "CantonDidResolutionService", "1.0",
                         List.of(new ServiceEndpoint(URI.create("http://localhost:42003/v1/dids"), 0),

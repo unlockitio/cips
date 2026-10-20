@@ -29,7 +29,9 @@ class CredentialResourceTest {
   void setUp() {
     var json = new ObjectMapper().createObjectNode();
     var projection = new CredentialProjection(
-        "credential", json, json, json, json, json, null, null);
+        new ObjectMapper().createArrayNode().add("https://www.w3.org/ns/credentials/v2"),
+        "credential", new ObjectMapper().createArrayNode().add("VerifiableCredential"), "issuer",
+        new ObjectMapper().createArrayNode().add(json), null, null);
     credential = new CredentialResponse("contract", "credential", "active", projection);
     registered = new RegisteredCredentialResponse(
         "contract", "credential", "active", projection,
@@ -45,9 +47,13 @@ class CredentialResourceTest {
     given().get("/v1/credentials/credential").then().statusCode(200)
         .body("contractId", equalTo("contract"))
         .body("credential.id", equalTo("credential"))
+        .body("credential['@context'][0]", equalTo("https://www.w3.org/ns/credentials/v2"))
+        .body("credential.type[0]", equalTo("VerifiableCredential"))
+        .body("credential.issuer", equalTo("issuer"))
         .body("registration", org.hamcrest.Matchers.nullValue());
     given().queryParam("page", "0").queryParam("pageSize", "50").get("/v1/credentials").then()
-        .statusCode(200).body("items", hasSize(1)).body("page", equalTo(0));
+        .statusCode(200).body("items", hasSize(1)).body("page", equalTo(0))
+        .body("items[0].credential.type[0]", equalTo("VerifiableCredential"));
   }
 
   @Test
@@ -58,9 +64,68 @@ class CredentialResourceTest {
 
     given().get("/v1/registered-credentials/credential").then().statusCode(200)
         .body("credential.id", equalTo("credential"))
+        .body("credential.type[0]", equalTo("VerifiableCredential"))
         .body("registration.registryAdmin", equalTo("admin"));
     given().queryParam("page", "0").queryParam("pageSize", "50")
-        .get("/v1/registered-credentials").then().statusCode(200).body("items", hasSize(1));
+        .get("/v1/registered-credentials").then().statusCode(200).body("items", hasSize(1))
+        .body("items[0].credential.type[0]", equalTo("VerifiableCredential"))
+        .body("items[0].registration.registryAdmin", equalTo("admin"));
+  }
+
+  @Test
+  void preservesIndependentIntrinsicBoundsAndRegistrationExpiryInHttpResponses() {
+    var json = new ObjectMapper().createObjectNode();
+    var projection = new CredentialProjection(new ObjectMapper().createArrayNode().add("https://www.w3.org/ns/credentials/v2"),
+        "credential", new ObjectMapper().createArrayNode().add("VerifiableCredential"), "issuer",
+        new ObjectMapper().createArrayNode().add(json),
+        "2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z");
+    var intrinsic = new CredentialResponse("contract", "credential", "active", projection);
+    var registeredProjection = new RegisteredCredentialResponse("contract", "credential", "active",
+        projection, new RegistrationResponse("admin", "2020-01-02T00:00:00Z",
+            "2021-01-01T00:00:00Z", json));
+    when(manager.get("credential", null)).thenReturn(intrinsic);
+    when(manager.getRegistered("credential", null)).thenReturn(registeredProjection);
+
+    given().get("/v1/credentials/credential").then().statusCode(200)
+        .body("credential.validFrom", equalTo("2020-01-01T00:00:00Z"))
+        .body("credential.validUntil", equalTo("2099-01-01T00:00:00Z"))
+        .body("lifecycleState", equalTo("active"))
+        .body("registration", org.hamcrest.Matchers.nullValue());
+    given().get("/v1/registered-credentials/credential").then().statusCode(200)
+        .body("credential.validFrom", equalTo("2020-01-01T00:00:00Z"))
+        .body("credential.validUntil", equalTo("2099-01-01T00:00:00Z"))
+        .body("registration.expiresAt", equalTo("2021-01-01T00:00:00Z"))
+        .body("lifecycleState", equalTo("active"));
+  }
+
+  @Test
+  void projectsOptionalAndOutOfRangeIntrinsicBoundsWithoutFilteringRawReads() {
+    var json = new ObjectMapper().createObjectNode();
+    var cases = List.of(
+        new String[] {"open", null, null},
+        new String[] {"future", "2099-01-01T00:00:00Z", null},
+        new String[] {"started", "2020-01-01T00:00:00Z", null},
+        new String[] {"ended", null, "2020-01-01T00:00:00Z"},
+        new String[] {"bounded", "2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z"});
+    for (String[] bounds : cases) {
+      var projection = new CredentialProjection(new ObjectMapper().createArrayNode().add("https://www.w3.org/ns/credentials/v2"),
+          bounds[0], new ObjectMapper().createArrayNode().add("VerifiableCredential"), "issuer",
+          new ObjectMapper().createArrayNode().add(json),
+          bounds[1], bounds[2]);
+      when(manager.get(bounds[0], null))
+          .thenReturn(new CredentialResponse("contract-" + bounds[0], bounds[0], "active", projection));
+      var body = given().get("/v1/credentials/" + bounds[0]).then().statusCode(200)
+          .body("credential.validFrom", equalTo(bounds[1]))
+          .body("credential.validUntil", equalTo(bounds[2]))
+          .body("lifecycleState", equalTo("active")).extract().asString();
+      try {
+        var projected = new ObjectMapper().readTree(body).path("credential");
+        org.junit.jupiter.api.Assertions.assertEquals(bounds[1] != null, projected.has("validFrom"));
+        org.junit.jupiter.api.Assertions.assertEquals(bounds[2] != null, projected.has("validUntil"));
+      } catch (java.io.IOException e) {
+        throw new AssertionError(e);
+      }
+    }
   }
 
   @Test

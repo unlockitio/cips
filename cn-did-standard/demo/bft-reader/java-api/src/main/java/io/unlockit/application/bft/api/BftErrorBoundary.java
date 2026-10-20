@@ -18,6 +18,11 @@ public class BftErrorBoundary implements ExceptionMapper<RuntimeException> {
         if (exception instanceof IllegalArgumentException) {
             return response(400, "invalid_request", exception.getMessage(), java.util.List.of());
         }
+        // The reader exposes only /v1/bft/dids/{did}; unmatched routes stay 404
+        // instead of being reported as a reader failure.
+        if (exception instanceof jakarta.ws.rs.NotFoundException) {
+            return response(404, "not_found", "The BFT reader exposes only singular DID resolution", java.util.List.of());
+        }
         return response(500, "internal_error", "Unexpected BFT reader error", java.util.List.of());
     }
 

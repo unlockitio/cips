@@ -8,6 +8,8 @@ import java.util.List;
 public interface CredentialQueryClient {
   List<Credential> findCredentialById(String credentialId);
 
+  List<Credential> findActiveNames(String name, String party);
+
   List<Credential> findCredentialPage(long offset, int limit);
 
   List<RegisteredCredential> findRegisteredCredentialById(String credentialId);

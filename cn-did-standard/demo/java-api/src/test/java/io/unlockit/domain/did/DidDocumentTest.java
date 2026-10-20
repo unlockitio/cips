@@ -29,7 +29,7 @@ class DidDocumentTest {
     void defensivelyCopiesCollections() {
         Did fixture = DidTestData.fixtures().getFirst();
         ArrayList<DidValue> controllers = new ArrayList<>(fixture.document().controller());
-        DidDocument copied = new DidDocument(fixture.id(), controllers, List.of(), null, List.of());
+        DidDocument copied = new DidDocument(fixture.id(), List.of(), controllers, List.of(), null, List.of());
         controllers.clear();
         assertEquals(1, copied.controller().size());
     }
@@ -39,12 +39,12 @@ class DidDocumentTest {
         Did fixture = DidTestData.fixtures().getFirst();
         DidValue id = fixture.id();
         VerificationMethod method = new VerificationMethod(id + "#test-key", "TestKey", id, "test-public-key");
-        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(), List.of(), null, List.of()));
-        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(id), List.of(method, method), null, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(), List.of(), List.of(), null, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(), List.of(id), List.of(method, method), null, List.of()));
         ServiceEntry service = fixture.document().service().getFirst();
-        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(id), List.of(), null, List.of(service, service)));
+        assertThrows(IllegalArgumentException.class, () -> new DidDocument(id, List.of(), List.of(id), List.of(), null, List.of(service, service)));
         assertThrows(IllegalArgumentException.class, () -> new DidDocument(
-                id, List.of(id), List.of(method), new VerificationRelationships(List.of("#missing"), null, null, null, null), List.of()));
+                id, List.of(), List.of(id), List.of(method), new VerificationRelationships(List.of("#missing"), null, null, null, null), List.of()));
     }
 
     @Test

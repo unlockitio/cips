@@ -83,6 +83,7 @@ services:
     environment:
       LEDGER_HOST: did-canton
       LEDGER_PORT: "6865"
+      DID_STANDALONE: "true"
       SEED_TIMEOUT_SECONDS: ${SEED_TIMEOUT_SECONDS:-300}
       READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-600}
     volumes:
