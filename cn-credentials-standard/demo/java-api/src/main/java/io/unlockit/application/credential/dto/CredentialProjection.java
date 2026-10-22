@@ -12,4 +12,11 @@ public record CredentialProjection(
     String issuer,
     JsonNode credentialSubject,
     String validFrom,
-    String validUntil) {}
+    String validUntil,
+    JsonNode credentialSchema) {
+  public CredentialProjection(JsonNode context, String id, JsonNode type, String issuer,
+      JsonNode credentialSubject, String validFrom, String validUntil) {
+    this(context, id, type, issuer, credentialSubject, validFrom, validUntil,
+        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode());
+  }
+}

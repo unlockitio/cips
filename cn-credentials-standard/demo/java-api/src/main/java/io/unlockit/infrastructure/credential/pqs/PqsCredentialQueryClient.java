@@ -401,8 +401,9 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
           subjects(credential.path("credentialSubject")),
           credential.path("holders"),
           credential.path("anchorers"),
-          text(credential.path("validFrom")),
-          text(credential.path("validUntil")));
+           text(credential.path("validFrom")),
+           text(credential.path("validUntil")),
+           credential.path("credentialSchema"), credential.path("securing"), null);
     } catch (JsonProcessingException exception) {
       throw new SQLException("PQS returned an unsupported Credential payload", exception);
     }

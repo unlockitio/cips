@@ -67,8 +67,8 @@ rows = []
 
 def add(cip, objective, limitation, url, check=None):
     result = capture(url)
-    if url.startswith(credential_url + "/v1/credentials/") and not vc2(result[4]):
-        raise RuntimeError(f"Credential is not unsigned VC2-shaped JSON: {url}")
+    if url.startswith(credential_url + "/v1/credentials/") and not (vc2(result[4]) or enveloped(result[4])):
+        raise RuntimeError(f"Credential is neither VC2-shaped JSON nor a VC envelope: {url}")
     if check is not None and not check(result[4]):
         raise RuntimeError(f"Response failed semantic check for {objective}: {url}\n{json.dumps(result[4], indent=2)}")
     rows.append((cip, objective, limitation, result))
@@ -84,6 +84,22 @@ def exact_id(logical_id):
 
 def view(body):
     return body["credential"]
+
+
+def enveloped(body):
+    doc = body.get("credential") if isinstance(body, dict) else None
+    return (isinstance(doc, dict) and doc.get("type") == "EnvelopedVerifiableCredential"
+            and isinstance(doc.get("id"), str) and doc["id"].startswith("data:application/vc+jwt,"))
+
+
+def secured(body, logical_id, mechanism, envelope=False):
+    verification = body.get("verification", {})
+    return (exact_id(logical_id)(body) and (enveloped(body) if envelope else vc2(body))
+            and verification.get("mechanism") == mechanism
+            and verification.get("status") == "VERIFIED"
+            and verification.get("errors") == []
+            and verification.get("schemaValidation", {}).get("status") == "Success"
+            and len(view(body).get("credentialSchema", [])) == (0 if envelope else 1))
 
 
 def subject(body):
@@ -128,9 +144,9 @@ def before_now(value):
     return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")) < datetime.datetime.now(datetime.timezone.utc)
 
 
-add("#204 base", "Read a base credential with textual external issuer, absent subject ID, and empty claims.", "Does not prove that the external issuer is a Canton Party or that the credential is externally verified.", credential("urn:demo:scenario:base-credential"), lambda body: exact_id("urn:demo:scenario:base-credential")(body) and textual_issuer(body, "https://external.example/issuer") and "id" not in subject(body) and claims(body) == {})
-add("#204 external VC", "Read the external DID issuer, student subject, nested achievement and empty Party holders with only DemoAnchorer signing.", "Does not prove verification of an external VC or control of either DID.", credential("urn:demo:scenario:external-did"), lambda body: anchored_external(body, "urn:demo:scenario:external-did", "did:ebsi:example-issuer", "did:key:example-student") and "achievement" in claims(body))
-add("#204 holderless", "Read the did:key issuer, absent subject ID, empty Party holders and sole DemoAnchorer signatory.", "Does not prove holder delegation.", credential("urn:demo:scenario:external-holderless"), lambda body: anchored_external(body, "urn:demo:scenario:external-holderless", "did:key:example-issuer", None))
+add("#204 base", "Read a structural placeholder envelope with Party holder and DemoIssuer anchorer.", "Does not prove issuer control or signature verification.", credential("urn:demo:scenario:base-credential"), lambda body: enveloped(body) and exact_id("urn:demo:scenario:base-credential")(body) and body.get("verification", {}).get("status") == "INDETERMINATE" and body.get("verification", {}).get("schemaValidation", {}).get("status") == "Indeterminate" and body.get("canton", {}).get("anchorers") == [issuer])
+add("#204 external VC", "Read the signed EdDSA vc+jwt envelope and independent offline verification and local schema results.", "Does not prove external trust, live status, or W3C conformance.", credential("urn:demo:scenario:external-did"), lambda body: secured(body, "urn:demo:scenario:external-did", "application/vc+jwt", True) and body.get("canton", {}).get("holders") == [] and body.get("canton", {}).get("anchorers") == [anchorer])
+add("#204 holderless", "Read the signed embedded eddsa-jcs-2022 proof, holderless subject, offline verification and local schema result.", "Does not prove holder delegation, external trust or JSON-LD processing.", credential("urn:demo:scenario:external-holderless"), lambda body: secured(body, "urn:demo:scenario:external-holderless", "eddsa-jcs-2022") and anchored_external(body, "urn:demo:scenario:external-holderless", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 85)
 add("#204 generic profile", "Read a Party subject Alice and a different Party holder Bob.", "Does not prove that subject and holder are interchangeable.", credential("urn:demo:scenario:generic-party-profile"), lambda body: exact_id("urn:demo:scenario:generic-party-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [party("DemoHolderB")])
 add("#169 profile", "Read Alice as both Party subject and holder with cip-<nr>/ claim keys.", "Does not prove all profile claims are externally attested.", credential("urn:demo:scenario:cip169-profile"), lambda body: exact_id("urn:demo:scenario:cip169-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [alice] and any(key.startswith("cip-") for key in claims(body)))
 add("#209 names", "Read Alice's name credential by exact logical ID.", "Does not prove every name is resolvable on every network.", credential("urn:demo:name:alice.canton"), exact_id("urn:demo:name:alice.canton"))
@@ -138,7 +154,7 @@ add("#209 resolution", "Resolve alice.canton on localnet.", "Does not prove DNS 
 add("Reverse resolve Alice", "Reverse-resolve Alice's exact Canton Party subject ID on localnet.", "Does not prove issuer or holder IDs are valid substitutes for subject IDs.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve DID", "Reverse-resolve that same Alice subject through DID assertions.", "Does not prove that every DID alias is conflict-free.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet", "source": "did"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve unbound", "Reverse-resolve the unbound DemoIssuer Party subject ID.", "Does not prove that a 404 is expected for an unbound party; an empty array is the expected 200 response.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": issuer, "network": "localnet"}), lambda body: body == [])
-add("#249", "Read the unverified dns textual issuer and six cprp/* claim keys.", "Does not prove DNS verification or issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and textual_issuer(body, "dns") and len([key for key in claims(body) if key.startswith("cprp/")]) == 6)
+add("#249", "Read the unverified DNS fixture as a structural placeholder envelope.", "Does not expose the six underlying cprp/* claims in the envelope, verify DNS or prove issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and enveloped(body) and body.get("verification", {}).get("status") == "INDETERMINATE")
 add("DID", "Read the DSO DID document advertising the cross-product services.", "Does not prove that an advertised service endpoint is reachable from this host.", did_url + "/v1/dids/dso")
 add("DID assertions", "Read the DID-side assertion for Alice's localnet alias.", "Does not prove that conflicting aliases are silently resolved.", did_url + "/v1/demo-name-assertions?" + urlencode({"alias": "urn:fqpn:localnet:demo:alice.canton"}), lambda body: isinstance(body, list) and any(item.get("subject") == alice for item in body))
 
@@ -204,6 +220,14 @@ extra.extend([
     ("Expired registration registered", "Read the past registration expiry beside that same still-future intrinsic validity.",
      "The underlying intrinsic credential has expired.", registered_expired),
 ])
+for suffix, mechanism, envelope in (("external-did", "application/vc+jwt", True),
+                                    ("external-holderless", "eddsa-jcs-2022", False)):
+    logical_id = "urn:demo:scenario:" + suffix
+    route("Registered signed " + suffix, "Read the registered secured credential and separate registration.",
+          "Registration does not independently authenticate a proof.",
+          credential_url + "/v1/registered-credentials/" + quote(logical_id, safe=""),
+          lambda body, logical_id=logical_id, mechanism=mechanism, envelope=envelope:
+          secured(body, logical_id, mechanism, envelope) and isinstance(body.get("registration", {}).get("registryAdmin"), str))
 
 for family in ("did-registries", "credential-registries", "credentials", "asset-registries", "assets"):
     route(f"DID discovery {family}", f"Read the DID API discovery descriptor for {family}.",
@@ -234,6 +258,17 @@ if any(not vc2(result[4]) or result[4].get("credentialId") != shared_id or resul
 credential_bft = capture(credential_bft_url + "/v1/bft/credentials/" + quote(shared_id, safe=""))
 if credential_bft[4].get("result") != credential_host_results[0][4] or credential_bft[4].get("quorum", {}).get("agreement") != "4-of-4":
     raise RuntimeError("Credentials BFT reader did not agree with four hosts")
+for suffix, mechanism, envelope in (("external-did", "application/vc+jwt", True),
+                                    ("external-holderless", "eddsa-jcs-2022", False)):
+    logical_id = "urn:demo:scenario:" + suffix
+    host_result = capture(credential(logical_id))
+    reader_result = capture(credential_bft_url + "/v1/bft/credentials/" + quote(logical_id, safe=""))
+    if (not secured(host_result[4], logical_id, mechanism, envelope)
+            or reader_result[4].get("result") != host_result[4]
+            or reader_result[4].get("quorum", {}).get("agreement") != "4-of-4"):
+        raise RuntimeError("Signed fixture not preserved by Credentials BFT: " + suffix)
+    extra.append(("Credentials BFT signed " + suffix, "Compare a verified seeded response through four Credentials hosts.",
+                  "Shared PQS is not independent trust or signature verification by a separate authority.", reader_result))
 credential_bft_missing = capture(credential_bft_url + "/v1/bft/credentials/" + quote("urn:demo:absent", safe=""), "404")
 if credential_bft_missing[4].get("error") != "not_found" or credential_bft_missing[4].get("status") != 404:
     raise RuntimeError("Credentials BFT missing-id semantics changed")

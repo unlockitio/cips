@@ -201,20 +201,32 @@ public class CredentialBftReader {
         || !body.path("credentialId").isTextual() || !id.equals(body.path("credentialId").asText())
         || !body.path("lifecycleState").isTextual() || !List.of("active", "archived").contains(body.path("lifecycleState").asText())) return false;
     JsonNode credential = body.path("credential");
-    if (!credential.isObject() || !credential.path("id").isTextual() || !id.equals(credential.path("id").asText())
-        || !credential.path("issuer").isTextual() || credential.path("issuer").asText().isBlank()
-        || !credential.path("@context").isArray() || credential.path("@context").isEmpty()
-        || !credential.path("@context").get(0).isTextual()
-        || !"https://www.w3.org/ns/credentials/v2".equals(credential.path("@context").get(0).asText())
-        || !credential.path("type").isArray() || credential.path("type").isEmpty()
-        || !credential.path("credentialSubject").isArray() || credential.path("credentialSubject").isEmpty()) return false;
-    boolean vc = false;
-    for (JsonNode type : credential.path("type")) {
-      if (!type.isTextual() || type.asText().isBlank()) return false;
-      if ("VerifiableCredential".equals(type.asText())) vc = true;
+    JsonNode verification = body.path("verification");
+    if (body.has("verification") && (!verification.isObject()
+        || !List.of("VERIFIED", "FAILED", "INDETERMINATE").contains(verification.path("status").asText())
+        || !verification.path("schemaValidation").isObject()
+        || !List.of("Success", "Failure", "Indeterminate").contains(verification.path("schemaValidation").path("status").asText()))) return false;
+    if (!credential.isObject()) return false;
+    boolean enveloped = "EnvelopedVerifiableCredential".equals(credential.path("type").asText());
+    if (enveloped) {
+      if (!credential.path("@context").isObject() || !credential.path("id").asText().startsWith("data:application/vc+jwt,")
+          || !body.has("verification")) return false;
+    } else {
+      if (!credential.path("id").isTextual() || !id.equals(credential.path("id").asText())
+          || !credential.path("issuer").isTextual() || credential.path("issuer").asText().isBlank()
+          || !credential.path("@context").isArray() || credential.path("@context").isEmpty()
+          || !credential.path("@context").get(0).isTextual()
+          || !"https://www.w3.org/ns/credentials/v2".equals(credential.path("@context").get(0).asText())
+          || !credential.path("type").isArray() || credential.path("type").isEmpty()
+          || !credential.path("credentialSubject").isArray() || credential.path("credentialSubject").isEmpty()) return false;
+      boolean vc = false;
+      for (JsonNode type : credential.path("type")) {
+        if (!type.isTextual() || type.asText().isBlank()) return false;
+        if ("VerifiableCredential".equals(type.asText())) vc = true;
+      }
+      if (!vc) return false;
+      for (JsonNode subject : credential.path("credentialSubject")) if (!subject.isObject()) return false;
     }
-    if (!vc) return false;
-    for (JsonNode subject : credential.path("credentialSubject")) if (!subject.isObject()) return false;
     JsonNode canton = body.path("canton");
     if (!canton.isObject() || !canton.path("holders").isArray() || !canton.path("anchorers").isArray()
         || canton.path("anchorers").isEmpty()) return false;

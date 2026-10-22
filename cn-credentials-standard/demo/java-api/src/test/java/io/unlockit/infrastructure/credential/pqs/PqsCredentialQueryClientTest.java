@@ -33,6 +33,14 @@ class PqsCredentialQueryClientTest {
     assertEquals("urn:demo:credential:001", credential.credentialId());
     assertEquals("VerifiableCredential", credential.credentialTypes().get(0).asText());
     assertEquals("2026-12-17T00:00:00Z", credential.validUntil());
+    var withSecurity = new ObjectMapper().readTree(CREDENTIAL).deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) withSecurity).set("credentialSchema",
+        new ObjectMapper().readTree("[{\"id\":\"https://example.org/demo/achievement-schema.json\",\"schemaType\":\"JsonSchema\",\"digestSRI\":\"sha256-example\"}]"));
+    ((com.fasterxml.jackson.databind.node.ObjectNode) withSecurity).set("securing",
+        new ObjectMapper().readTree("{\"tag\":\"EnvelopedProof\",\"value\":{\"mediaType\":\"application/vc+cose\",\"encoded\":\"placeholder\"}}"));
+    var preserved = client.mapCredential("cid", withSecurity.toString()).withLifecycle(null);
+    assertEquals("JsonSchema", preserved.credentialSchema().path(0).path("schemaType").asText());
+    assertEquals("placeholder", preserved.securing().path("value").path("encoded").asText());
 
     var registered = client.mapRegisteredPayloads("cid", CREDENTIAL, REGISTRATION);
     assertEquals("admin", registered.registration().registryAdmin());

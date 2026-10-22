@@ -22,19 +22,21 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class CredentialResponseMapper {
   public CredentialResponse toResponse(Credential credential) {
+    var mapped = mappedCredential(credential);
     return new CredentialResponse(
-        credential.contractId(), credential.credentialId(), state(credential), projection(credential),
-        roles(credential), credential.lifecycle());
+        credential.contractId(), credential.credentialId(), state(credential), mapped.document(),
+        mapped.verification(), roles(credential), credential.lifecycle());
   }
 
   public RegisteredCredentialResponse toResponse(RegisteredCredential registeredCredential) {
     var credential = registeredCredential.credential();
     var registration = registeredCredential.registration();
+    var mapped = mappedCredential(credential);
     return new RegisteredCredentialResponse(
         credential.contractId(),
         credential.credentialId(),
         state(credential),
-        projection(credential),
+        mapped.document(), mapped.verification(),
         new RegistrationResponse(
             registration.registryAdmin(),
             registration.registeredAt(),
@@ -44,6 +46,63 @@ public class CredentialResponseMapper {
 
   private static String state(Credential credential) {
     return credential.lifecycle() == null ? "active" : credential.lifecycle().state();
+  }
+
+  private final OfflineCredentialVerifier verifier;
+
+  public CredentialResponseMapper() { this(java.time.Clock.systemUTC()); }
+  public CredentialResponseMapper(java.time.Clock clock) { this.verifier = new OfflineCredentialVerifier(clock); }
+
+  private record Mapped(JsonNode document, io.unlockit.application.credential.dto.VerificationResponse verification) {}
+
+  private Mapped mappedCredential(Credential credential) {
+    JsonNode index = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(projection(credential));
+    JsonNode securing = credential.securing();
+    String mechanism = "unsecured";
+    JsonNode document = index;
+    String compact = null;
+    JsonNode summary = null;
+    if (securing != null && securing.isObject() && !securing.isNull()) {
+      mechanism = securing.path("tag").asText();
+      JsonNode value = securing.path("value");
+      if ("EnvelopedProof".equals(mechanism)) {
+        mechanism = value.path("mediaType").asText();
+        compact = value.path("encoded").asText();
+        ObjectNode envelope = JSON.objectNode();
+        ObjectNode envelopeContext = JSON.objectNode();
+        envelopeContext.put("@protected", true);
+        envelopeContext.put("id", "@id");
+        envelopeContext.put("type", "@type");
+        envelopeContext.put("EnvelopedVerifiableCredential", "https://www.w3.org/2018/credentials#EnvelopedVerifiableCredential");
+        envelope.set("@context", envelopeContext);
+        envelope.put("id", "data:" + mechanism + "," + compact);
+        envelope.put("type", "EnvelopedVerifiableCredential");
+        document = envelope;
+      } else if ("EmbeddedProof".equals(mechanism)) {
+        try {
+          document = new com.fasterxml.jackson.databind.ObjectMapper().readTree(value.path("securedDocument").asText());
+          summary = value.path("proofs").path("hd");
+          mechanism = document.path("proof").path("cryptosuite").asText("embedded-unsupported");
+          if (!value.path("proofs").path("tl").isArray() || !value.path("proofs").path("tl").isEmpty()
+              || !document.path("proof").isObject())
+            mechanism = "embedded-multiple-proofs-unsupported";
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+          mechanism = "embedded-malformed";
+          document = JSON.objectNode();
+        }
+      }
+    }
+    JsonNode signed = document;
+    if ("application/vc+jwt".equals(mechanism)) {
+      try {
+        String[] segments = compact.split("\\.", -1);
+        signed = new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+            java.util.Base64.getUrlDecoder().decode(segments[1]));
+      } catch (RuntimeException | java.io.IOException e) {
+        signed = JSON.objectNode();
+      }
+    }
+    return new Mapped(document, verifier.verify(signed, index, mechanism, compact, summary));
   }
 
   private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
@@ -78,8 +137,20 @@ public class CredentialResponseMapper {
       });
       projectedSubjects.add(projected);
     }
+    ArrayNode schemas = JSON.arrayNode();
+    JsonNode rawSchemas = credential.credentialSchema();
+    if (rawSchemas != null && !rawSchemas.isMissingNode() && !rawSchemas.isNull()) {
+      if (!rawSchemas.isArray()) throw invalid("credentialSchema must be an array");
+      for (JsonNode schema : rawSchemas) {
+        ObjectNode entry = JSON.objectNode();
+        entry.put("id", text(schema.path("id")));
+        entry.put("type", text(schema.path("schemaType")));
+        if (schema.path("digestSRI").isTextual()) entry.put("digestSRI", schema.path("digestSRI").asText());
+        schemas.add(entry);
+      }
+    }
     return new CredentialProjection(context, credential.credentialId(), projectedTypes,
-        identifier(credential.issuer()), projectedSubjects, credential.validFrom(), credential.validUntil());
+        identifier(credential.issuer()), projectedSubjects, credential.validFrom(), credential.validUntil(), schemas);
   }
 
   private static ObjectNode roles(Credential credential) {

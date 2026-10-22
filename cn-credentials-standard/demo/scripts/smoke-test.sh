@@ -54,19 +54,39 @@ printf '%s' "$intrinsic" | jq -e '
   (has("registration") | not)
 ' >/dev/null
 
-for scenario in external-did external-holderless; do
-  anchored=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:scenario:$scenario")
-  printf '%s' "$anchored" | jq -e --arg scenario "$scenario" '
-    .credentialId == ("urn:demo:scenario:" + $scenario) and
-    (.credential.issuer | type == "string") and
-    (.canton.holders == []) and
-    (.canton.anchorers | length == 1) and
-    (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
-    (if $scenario == "external-holderless" then
-      (.credential.credentialSubject[0] | has("id") | not)
-    else (.credential.credentialSubject[0].id | startswith("did:key:")) end)
-  ' >/dev/null
+for family in credentials registered-credentials; do
+  for scenario in external-did external-holderless; do
+    anchored=$(curl --fail --silent "$BASE/v1/$family/urn:demo:scenario:$scenario")
+    printf '%s' "$anchored" | jq -e --arg scenario "$scenario" --arg family "$family" '
+      .credentialId == ("urn:demo:scenario:" + $scenario) and
+      (.canton.holders == []) and
+      (.canton.anchorers | length == 1) and
+      (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
+      .verification.status == "VERIFIED" and
+      .verification.schemaValidation.status == "Success" and
+      (.verification.errors == []) and
+      (if $family == "registered-credentials" then (.registration.registryAdmin | type == "string")
+       else (has("registration") | not) end) and
+      (if $scenario == "external-did" then
+        .verification.mechanism == "application/vc+jwt" and
+        .credential.type == "EnvelopedVerifiableCredential" and
+        (.credential.id | startswith("data:application/vc+jwt,"))
+      else
+        .verification.mechanism == "eddsa-jcs-2022" and
+        (.credential.issuer | startswith("did:key:")) and
+        (.credential.credentialSubject[0] | has("id") | not) and
+        .credential.credentialSubject[0].achievement.score == 85 and
+        .credential.proof.cryptosuite == "eddsa-jcs-2022"
+      end)
+    ' >/dev/null
+  done
 done
+placeholder=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:scenario:base-credential")
+printf '%s' "$placeholder" | jq -e '
+  .verification.status == "INDETERMINATE" and
+  .verification.schemaValidation.status == "Indeterminate" and
+  .credential.type == "EnvelopedVerifiableCredential"
+' >/dev/null
 expired_registration=$(curl --fail --silent "$BASE/v1/registered-credentials/urn:demo:scenario:expired-registration")
 printf '%s' "$expired_registration" | jq -e '
   .credentialId == "urn:demo:scenario:expired-registration" and
