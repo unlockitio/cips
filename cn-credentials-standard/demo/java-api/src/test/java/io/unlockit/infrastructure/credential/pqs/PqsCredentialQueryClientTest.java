@@ -217,6 +217,48 @@ class PqsCredentialQueryClientTest {
   }
 
   @Test
+  void subjectFiltersApplyToOneSubjectAndKeepLiteralPrefixMatching() {
+    String sql = PqsCredentialQueryClient.historySql(false, "active", false);
+    String subjects = sql.substring(sql.indexOf(" and exists (select 1 from jsonb_array_elements"), sql.indexOf(" order by"));
+    assertEquals(1, subjects.split("jsonb_array_elements", -1).length - 1);
+    assertTrue(subjects.contains("where (?::text is null or s -> 'id' ->> 'value' = ?::text)"
+        + " and (?::text is null or exists (select 1 from jsonb_object_keys(s -> 'claims') k"
+        + " where starts_with(k, ?::text))))"));
+    assertFalse(subjects.contains("like"));
+  }
+
+  @Test
+  void combinedSubjectIdAndKeyPrefixRequireTheSameSubject() throws Exception {
+    // Relational analogue of the single-subject exists predicate: PQS jsonb functions do not run on H2.
+    String predicate = "exists (select 1 from subjects s where s.credential = c.credential"
+        + " and (? is null or s.subject = ?)"
+        + " and (? is null or exists (select 1 from claims k where k.credential = s.credential"
+        + " and k.subject = s.subject and k.claim_key like ? || '%')))";
+    try (var connection = java.sql.DriverManager.getConnection("jdbc:h2:mem:subjectScope")) {
+      var setup = connection.createStatement();
+      setup.execute("create table credentials(credential varchar)");
+      setup.execute("create table subjects(credential varchar, subject varchar)");
+      setup.execute("create table claims(credential varchar, subject varchar, claim_key varchar)");
+      // same-subject: alice carries cns.name. cross-subject: alice and the cns.name claim are separate subjects.
+      setup.execute("insert into credentials values ('same'), ('cross')");
+      setup.execute("insert into subjects values ('same', 'alice'), ('cross', 'alice'), ('cross', 'bob')");
+      setup.execute("insert into claims values ('same', 'alice', 'cns.name'), ('cross', 'bob', 'cns.name')");
+      try (var statement = connection.prepareStatement(
+          "select c.credential from credentials c where " + predicate + " order by c.credential")) {
+        statement.setString(1, "alice");
+        statement.setString(2, "alice");
+        statement.setString(3, "cns.name");
+        statement.setString(4, "cns.name");
+        try (var rows = statement.executeQuery()) {
+          assertTrue(rows.next());
+          assertEquals("same", rows.getString(1));
+          assertFalse(rows.next());
+        }
+      }
+    }
+  }
+
+  @Test
   void allRegisteredSqlRequiresCompatibleArchivesAndAllowsActiveNulls() throws Exception {
     String compatible = "((c.archive_event_id is null and r.archive_event_id is null"
         + " and c.archived_at_offset is null and r.archived_at_offset is null"

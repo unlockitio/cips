@@ -246,10 +246,9 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
         + " and (?::timestamptz is null or a.archived_effective_at < ?::timestamptz)"
         + " and (?::text is null or c.payload -> 'issuer' ->> 'value' = ?::text)"
         + " and (?::text is null or c.payload -> 'holders' @> jsonb_build_array(?::text))"
-        + " and (?::text is null or exists (select 1 from jsonb_array_elements(jsonb_build_array(c.payload -> 'credentialSubject' -> 'hd') || (c.payload -> 'credentialSubject' -> 'tl')) s"
-        + " where s -> 'id' ->> 'value' = ?::text))"
-        + " and (?::text is null or exists (select 1 from jsonb_array_elements(jsonb_build_array(c.payload -> 'credentialSubject' -> 'hd') || (c.payload -> 'credentialSubject' -> 'tl')) s,"
-        + " jsonb_object_keys(s -> 'claims') k where starts_with(k, ?::text)))"
+        + " and exists (select 1 from jsonb_array_elements(jsonb_build_array(c.payload -> 'credentialSubject' -> 'hd') || (c.payload -> 'credentialSubject' -> 'tl')) s"
+        + " where (?::text is null or s -> 'id' ->> 'value' = ?::text)"
+        + " and (?::text is null or exists (select 1 from jsonb_object_keys(s -> 'claims') k where starts_with(k, ?::text))))"
         + (registered ? " and (?::text is null or r.payload ->> 'registryAdmin' = ?::text)" : "")
         + (singular ? " order by " + (state.equals("all") ? "(a.archived_at_offset is null) desc, " : "")
             + "c.created_at_offset desc, c.created_at_ix desc, c.contract_id desc"
