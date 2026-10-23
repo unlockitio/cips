@@ -147,6 +147,7 @@ def before_now(value):
 add("#204 base", "Read a structural placeholder envelope with Party holder and DemoIssuer anchorer.", "Does not prove issuer control or signature verification.", credential("urn:demo:scenario:base-credential"), lambda body: enveloped(body) and exact_id("urn:demo:scenario:base-credential")(body) and body.get("verification", {}).get("status") == "INDETERMINATE" and body.get("verification", {}).get("schemaValidation", {}).get("status") == "Indeterminate" and body.get("canton", {}).get("anchorers") == [issuer])
 add("#204 external VC", "Read the signed EdDSA vc+jwt envelope and independent offline verification and local schema results.", "Does not prove external trust, live status, or W3C conformance.", credential("urn:demo:scenario:external-did"), lambda body: secured(body, "urn:demo:scenario:external-did", "application/vc+jwt", True) and body.get("canton", {}).get("holders") == [] and body.get("canton", {}).get("anchorers") == [anchorer])
 add("#204 holderless", "Read the signed embedded eddsa-jcs-2022 proof, holderless subject, offline verification and local schema result.", "Does not prove holder delegation, external trust or JSON-LD processing.", credential("urn:demo:scenario:external-holderless"), lambda body: secured(body, "urn:demo:scenario:external-holderless", "eddsa-jcs-2022") and anchored_external(body, "urn:demo:scenario:external-holderless", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 85)
+add("#204 tampered", "Read the seeded score-86 document whose proof signed score 85 and inspect independent failed signature and successful schema results.", "Does not prove external trust, remote schema validation or W3C conformance.", credential("urn:demo:scenario:external-tampered"), lambda body: vc2(body) and anchored_external(body, "urn:demo:scenario:external-tampered", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 86 and view(body).get("proof", {}).get("cryptosuite") == "eddsa-jcs-2022" and body.get("verification", {}).get("status") == "FAILED" and "Invalid Data Integrity signature" in body.get("verification", {}).get("errors", []) and not any(error.startswith("Projection mismatch:") for error in body["verification"]["errors"]) and body["verification"].get("schemaValidation", {}).get("status") == "Success")
 add("#204 generic profile", "Read a Party subject Alice and a different Party holder Bob.", "Does not prove that subject and holder are interchangeable.", credential("urn:demo:scenario:generic-party-profile"), lambda body: exact_id("urn:demo:scenario:generic-party-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [party("DemoHolderB")])
 add("#169 profile", "Read Alice as both Party subject and holder with cip-<nr>/ claim keys.", "Does not prove all profile claims are externally attested.", credential("urn:demo:scenario:cip169-profile"), lambda body: exact_id("urn:demo:scenario:cip169-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [alice] and any(key.startswith("cip-") for key in claims(body)))
 add("#209 names", "Read Alice's name credential by exact logical ID.", "Does not prove every name is resolvable on every network.", credential("urn:demo:name:alice.canton"), exact_id("urn:demo:name:alice.canton"))
@@ -229,6 +230,15 @@ for suffix, mechanism, envelope in (("external-did", "application/vc+jwt", True)
           lambda body, logical_id=logical_id, mechanism=mechanism, envelope=envelope:
           secured(body, logical_id, mechanism, envelope) and isinstance(body.get("registration", {}).get("registryAdmin"), str))
 
+route("Registered tampered proof", "Read the registered score-86 document and separate failed signature from successful schema validation.",
+      "Registration does not repair an invalid signature.",
+      credential_url + "/v1/registered-credentials/" + quote("urn:demo:scenario:external-tampered", safe=""),
+      lambda body: exact_id("urn:demo:scenario:external-tampered")(body)
+      and body.get("verification", {}).get("status") == "FAILED"
+      and "Invalid Data Integrity signature" in body["verification"].get("errors", [])
+      and body["verification"].get("schemaValidation", {}).get("status") == "Success"
+      and isinstance(body.get("registration", {}).get("registryAdmin"), str))
+
 for family in ("did-registries", "credential-registries", "credentials", "asset-registries", "assets"):
     route(f"DID discovery {family}", f"Read the DID API discovery descriptor for {family}.",
           "Actual {family} records or reachability of a separate {family} API.", did_url + "/v1/" + family,
@@ -306,7 +316,7 @@ if did_id != "did:canton:" + dso:
     raise RuntimeError("DID admin mismatch")
 services = did_document[4]["didDocument"]["service"]
 lines.extend(["## DID discovery and resolution", "", f"Registry admin and DID DSO: `{dso}`; distinct issuer: `{issuer}`.", ""])
-for label, result in [("DID document", did_document), ("DID alias assertion", rows[12][3])]:
+for label, result in [("DID document", did_document), ("DID alias assertion", rows[13][3])]:
     # The same response is already shown above; retain one body only.
     lines.extend([f"{label}: verified HTTP {result[1]} at `{result[0][-1]}`; full response in Credentials / VC above.", ""])
 forward = next(item for item in services if item["id"] == did_id + "#name-resolution")
@@ -380,5 +390,5 @@ marker = "## DID discovery and resolution"
 position = lines.index(marker)
 lines[position:position] = scenario_lines + ["## Additional exposed GET routes and fixture contrast", ""] + [line for label, objective, limitation, result in extra for line in render_result(label, objective, limitation, result)]
 output.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
-print(f"Wrote {output}: 13 scenarios, {len(extra) - 2} newly covered GET patterns, 2 expiry views, 8 successful DID proxy calls, 8 conflict/missing probes")
+print(f"Wrote {output}: {len(rows)} scenarios, {len(extra) - 2} newly covered GET patterns, 2 expiry views, 8 successful DID proxy calls, 8 conflict/missing probes")
 PY

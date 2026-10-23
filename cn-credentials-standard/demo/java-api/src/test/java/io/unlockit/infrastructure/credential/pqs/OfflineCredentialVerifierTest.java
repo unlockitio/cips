@@ -98,6 +98,11 @@ class OfflineCredentialVerifierTest {
     var input = (com.fasterxml.jackson.databind.node.ObjectNode) payload(source, wrapping.toString());
     JsonNode unsupported = mapped(input);
     assertEquals("INDETERMINATE", unsupported.at("/verification/status").asText());
+    var placeholder = (com.fasterxml.jackson.databind.node.ObjectNode) envelope("EnvelopedProof", "encoded", "placeholder.jws.scenario-base-credential");
+    ((com.fasterxml.jackson.databind.node.ObjectNode) placeholder.path("value")).put("mediaType", "application/vc+jwt");
+    JsonNode structural = mapped(payload(source, placeholder.toString()));
+    assertEquals("INDETERMINATE", structural.at("/verification/status").asText());
+    assertEquals("Indeterminate", structural.at("/verification/schemaValidation/status").asText());
     assertEquals("Success", unsupported.at("/verification/schemaValidation/status").asText());
     ((com.fasterxml.jackson.databind.node.ObjectNode) input.at("/credentialSchema/0")).put("digestSRI", "sha256-wrong");
     assertEquals("Failure", mapped(input).at("/verification/schemaValidation/status").asText());
@@ -131,7 +136,7 @@ class OfflineCredentialVerifierTest {
         .put("cryptosuite", "eddsa-jcs-2022").put("created", "2026-09-18T00:00:00Z")
         .put("verificationMethod", source.at("/proof/verificationMethod").asText())
         .put("proofPurpose", "assertionMethod").toString();
-    for (String name : new String[] {"external-holderless.json", "external-holderless-tampered.json"}) {
+    for (String name : new String[] {"external-holderless.json", "external-holderless-tampered.json", "external-tampered.json"}) {
       String secured = Files.readString(fixture(name)).trim();
       var wrapping = (com.fasterxml.jackson.databind.node.ObjectNode) envelope("EmbeddedProof", "securedDocument", secured);
       var proofs = json.createObjectNode();
@@ -139,8 +144,14 @@ class OfflineCredentialVerifierTest {
       proofs.set("tl", json.createArrayNode());
       ((com.fasterxml.jackson.databind.node.ObjectNode) wrapping.path("value")).set("proofs", proofs);
       String securing = wrapping.toString();
-      JsonNode response = mapped(payload(source, securing));
+      JsonNode projected = name.equals("external-holderless-tampered.json") ? source : json.readTree(secured);
+      JsonNode response = mapped(payload(projected, securing));
       assertEquals(name.contains("tampered") ? "FAILED" : "VERIFIED", response.at("/verification/status").asText(), response.toString());
+      if (name.equals("external-tampered.json")) {
+        assertEquals("urn:demo:scenario:external-tampered", response.at("/credentialId").asText());
+        assertTrue(response.at("/verification/errors").toString().contains("Invalid Data Integrity signature"));
+        assertFalse(response.at("/verification/errors").toString().contains("Projection mismatch"));
+      }
       assertEquals(json.readTree(secured), response.path("credential"));
       assertEquals("Success", response.at("/verification/schemaValidation/status").asText());
     }

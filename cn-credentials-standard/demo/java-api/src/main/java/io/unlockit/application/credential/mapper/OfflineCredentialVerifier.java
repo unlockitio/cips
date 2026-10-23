@@ -43,6 +43,10 @@ public final class OfflineCredentialVerifier {
       warnings.add("No signature; this is an unsecured projection");
     try {
       if ("application/vc+jwt".equals(mechanism)) {
+        if (compact.startsWith("placeholder.jws.")) {
+          warnings.add("Structural placeholder; no signed JWT is available");
+          return new VerificationResponse(mechanism, status, null, errors, warnings, schema(document));
+        }
         String[] parts = compact.split("\\.", -1);
         if (parts.length != 3) throw new IllegalArgumentException("Malformed compact JWS");
         JsonNode header = JSON.readTree(decodeUrl(parts[0]));

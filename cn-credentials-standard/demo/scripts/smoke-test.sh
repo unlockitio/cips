@@ -80,10 +80,30 @@ for family in credentials registered-credentials; do
       end)
     ' >/dev/null
   done
+  tampered=$(curl --fail --silent "$BASE/v1/$family/urn:demo:scenario:external-tampered")
+  printf '%s' "$tampered" | jq -e --arg family "$family" '
+    .credentialId == "urn:demo:scenario:external-tampered" and
+    .credential.id == .credentialId and
+    .credential.credentialSubject[0].achievement.score == 86 and
+    .credential.proof.cryptosuite == "eddsa-jcs-2022" and
+    .canton.holders == [] and
+    (.canton.anchorers | length == 1) and
+    (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
+    .verification.status == "FAILED" and
+    (.verification.errors | index("Invalid Data Integrity signature") != null) and
+    (.verification.errors | all(startswith("Projection mismatch:") | not)) and
+    .verification.schemaValidation.status == "Success" and
+    (if $family == "registered-credentials" then (.registration.registryAdmin | type == "string")
+     else (has("registration") | not) end)
+  ' >/dev/null
 done
 placeholder=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:scenario:base-credential")
 printf '%s' "$placeholder" | jq -e '
   .verification.status == "INDETERMINATE" and
+  .verification.mechanism == "application/vc+jwt" and
+  .verification.controller == null and
+  .verification.errors == [] and
+  (.verification.warnings | index("Structural placeholder; no signed JWT is available") != null) and
   .verification.schemaValidation.status == "Indeterminate" and
   .credential.type == "EnvelopedVerifiableCredential"
 ' >/dev/null

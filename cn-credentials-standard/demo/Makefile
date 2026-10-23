@@ -12,6 +12,10 @@ build: daml-build java-test
 	$(MAKE) -C ../../cn-did-standard/demo daml-build java-test bft-reader-test
 	$(COMPOSE) build
 
+.PHONY: rebuild-credentials-api
+rebuild-credentials-api:
+	$(COMPOSE) -p cn-credential-demo -f compose.yaml up -d --build --no-deps credential-api-1 credential-api-2 credential-api-3 credential-api-4
+
 daml-build:
 	./scripts/fetch-dependencies.sh
 	dpm build --all

@@ -110,7 +110,7 @@ services:
       SCRIBE_SOURCE_LEDGER_PORT: "6865"
       SCRIBE_SOURCE_LEDGER_AUTH: NoAuth
       SCRIBE_SOURCE_LEDGER_USER: participant_admin
-      SCRIBE_PIPELINE_LEDGER_START: Genesis
+      SCRIBE_PIPELINE_LEDGER_START: Oldest
       SCRIBE_PIPELINE_FILTER_PARTIES: "*"
       SCRIBE_PIPELINE_FILTER_CONTRACTS: "*"
       SCRIBE_PIPELINE_FILTER_METADATA: "*"
@@ -148,7 +148,7 @@ services:
       PGDATABASE: ${POSTGRES_DB:-pqs}
       PGUSER: ${POSTGRES_USER:-pqs}
       PGPASSWORD: ${POSTGRES_PASSWORD:-pqs-demo}
-      CREDENTIAL_SEED_COUNT: ${CREDENTIAL_SEED_COUNT:-369}
+      CREDENTIAL_SEED_COUNT: ${CREDENTIAL_SEED_COUNT:-370}
       PROJECTION_TIMEOUT_SECONDS: ${PROJECTION_TIMEOUT_SECONDS:-300}
     volumes:
       - ./scripts:/workspace/scripts:ro
@@ -232,7 +232,9 @@ services:
 
   credential-api-1: &credential-api
     mem_limit: ${CREDENTIAL_API_MEM_LIMIT:-256m}
-    build: ./java-api
+    build:
+      context: .
+      dockerfile: java-api/Dockerfile
     environment: &credential-api-environment
       JAVA_TOOL_OPTIONS: ${CREDENTIAL_API_JAVA_TOOL_OPTIONS:--Xmx160m}
       CREDENTIALS_HTTP_PORT: "8080"

@@ -1,8 +1,9 @@
 FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
-COPY pom.xml .
+COPY java-api/pom.xml .
 RUN mvn -B dependency:go-offline
-COPY src src
+COPY java-api/src src
+COPY fixtures /fixtures
 RUN mvn -B package
 
 FROM eclipse-temurin:21-jre

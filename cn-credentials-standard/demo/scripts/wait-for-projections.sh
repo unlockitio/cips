@@ -3,9 +3,9 @@ set -eu
 
 CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential'
 REGISTERED_CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential'
-# 360 deterministic records plus seven seeded CIP scenarios and two name credentials.
+# 360 deterministic records plus eight seeded CIP scenarios and two name credentials.
 # The separate Holding template is not projected as a Credential interface.
-CREDENTIAL_EXPECTED=${CREDENTIAL_SEED_COUNT:-369}
+CREDENTIAL_EXPECTED=${CREDENTIAL_SEED_COUNT:-370}
 TIMEOUT=${PROJECTION_TIMEOUT_SECONDS:-300}
 started=$(date +%s)
 
