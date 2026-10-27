@@ -5,8 +5,8 @@ Run from `cn-credentials-standard/demo` after a fresh, fully seeded unified stac
 | Time | Step | Point to make |
 | --- | --- | --- |
 | 0:00–0:35 | Party-issued `urn:demo:credential:000` | Real DemoIssuer Party appears in anchorers: ledger authorization is visible. |
-| 0:35–1:35 | `external-did`, then `external-holderless` | JWT envelope ID begins `data:application/vc+jwt,`; embedded proof names `eddsa-jcs-2022`. Both verify and pass local schema validation, anchored by DemoAnchorer rather than the external issuer. |
-| 1:35–2:10 | `external-tampered` | Score 86 matches the typed projection but the test-key signature covered score 85 for this same ID: `FAILED` signature while schema remains `Success`. |
+| 0:35–1:35 | `external-did`, then `external-holderless` | JWT envelope ID begins `data:application/vc+jwt,`; embedded proof names `eddsa-jcs-2022`. Separate POSTs verify both demo-key proofs and local schemas; the GETs only carry secured material anchored by DemoAnchorer. |
+| 1:35–2:10 | `external-tampered` | Score 86 matches the typed projection but the test-key signature covered score 85 for this same ID: Standalone POST reports `FAILED` signature while schema remains `Success`; GET has no calculated result. |
 | 2:10–3:10 | Stop credential-api-4, BFT GET, restore | Three matching HTTP origins still return 200 with `3-of-4`. Script traps exit and starts host 4, waiting for readiness before completion. This is one stopped-host availability test. |
 | 3:10–4:00 | DSO DID discovery on 42003 | Runtime DSO DID document advertises the credential name-resolution service and self-claimed `urn:fqpn:localnet:demo:dso.canton` alias. |
 

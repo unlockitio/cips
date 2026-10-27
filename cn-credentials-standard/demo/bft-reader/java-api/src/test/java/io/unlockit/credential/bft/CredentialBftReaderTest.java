@@ -55,11 +55,12 @@ class CredentialBftReaderTest {
       envelope.put("id", "data:application/vc+jwt,header.payload.signature");
       envelope.put("type", "EnvelopedVerifiableCredential");
       ((com.fasterxml.jackson.databind.node.ObjectNode) enveloped).set("credential", envelope);
-      ((com.fasterxml.jackson.databind.node.ObjectNode) enveloped).set("verification", new ObjectMapper().readTree(
-          "{\"mechanism\":\"application/vc+jwt\",\"status\":\"INDETERMINATE\",\"errors\":[],\"warnings\":[],\"schemaValidation\":{\"status\":\"Indeterminate\",\"errors\":[]}}"));
+
       java.util.Arrays.fill(bodies, enveloped.toString());
       assertEquals("4-of-4", reader.read("urn%3Ademo%3Atest").quorum().agreement());
-      assertEquals("INDETERMINATE", reader.read("urn%3Ademo%3Atest").result().at("/verification/status").asText());
+      assertEquals(false, reader.read("urn%3Ademo%3Atest").result().has("verification"));
+      bodies[3] = enveloped.deepCopy().toString().replace("\"canton\"", "\"verification\":{\"status\":\"VERIFIED\"},\"canton\"");
+      assertEquals(3, reader.read("urn%3Ademo%3Atest").quorum().matched());
       java.util.Arrays.fill(bodies, RECORD);
       bodies[3] = "{";
       assertEquals("3-of-4", reader.read("urn%3Ademo%3Atest").quorum().agreement());

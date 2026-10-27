@@ -11,7 +11,9 @@ import pathlib
 import shlex
 import subprocess
 import sys
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, unquote
+
+fixtures = pathlib.Path(sys.argv[1]).resolve().parent.parent / "fixtures"
 
 output = pathlib.Path(sys.argv[1]).resolve()
 credential_url = os.environ.get("CREDENTIALS_API_URL", "http://localhost:41003").rstrip("/")
@@ -21,9 +23,12 @@ credential_hosts = [f"http://localhost:{os.environ.get(f'CREDENTIALS_API_{i}_POR
 credential_bft_url = os.environ.get("CREDENTIAL_BFT_READER_URL", "http://localhost:41007").rstrip("/")
 
 
-def capture(url, expected="200"):
-    command = ["curl", "--silent", "--show-error", "--max-time", "40", "--write-out", "\n__CURL_METADATA__%{http_code} %{content_type}", url]
-    process = subprocess.run(command, capture_output=True, text=True, check=False)
+def capture(url, expected="200", media_type=None, secured=None):
+    command = ["curl", "--silent", "--show-error", "--max-time", "40", "--write-out", "\n__CURL_METADATA__%{http_code} %{content_type}"]
+    if media_type:
+        command += ["--request", "POST", "--header", f"Content-Type: {media_type}", "--data-binary", "@-"]
+    command.append(url)
+    process = subprocess.run(command, input=secured, capture_output=True, text=True, check=False)
     if process.returncode:
         raise RuntimeError(f"curl failed (exit {process.returncode}): {shlex.join(command)}\n{process.stderr}")
     marker = "\n__CURL_METADATA__"
@@ -65,10 +70,17 @@ if len({alice, issuer, anchorer, dso}) != 4:
 rows = []
 
 
+def reject_inline_results(body, url):
+    if not isinstance(body, dict) or "verification" in body or "schemaValidation" in body:
+        raise RuntimeError(f"Unexpected inline verification or schema validation on record GET: {url}")
+
+
 def add(cip, objective, limitation, url, check=None):
     result = capture(url)
     if url.startswith(credential_url + "/v1/credentials/") and not (vc2(result[4]) or enveloped(result[4])):
         raise RuntimeError(f"Credential is neither VC2-shaped JSON nor a VC envelope: {url}")
+    if url.startswith(credential_url + "/v1/credentials/"):
+        reject_inline_results(result[4], url)
     if check is not None and not check(result[4]):
         raise RuntimeError(f"Response failed semantic check for {objective}: {url}\n{json.dumps(result[4], indent=2)}")
     rows.append((cip, objective, limitation, result))
@@ -92,14 +104,26 @@ def enveloped(body):
             and isinstance(doc.get("id"), str) and doc["id"].startswith("data:application/vc+jwt,"))
 
 
-def secured(body, logical_id, mechanism, envelope=False):
-    verification = body.get("verification", {})
+def secured(body, logical_id, envelope=False):
     return (exact_id(logical_id)(body) and (enveloped(body) if envelope else vc2(body))
-            and verification.get("mechanism") == mechanism
-            and verification.get("status") == "VERIFIED"
-            and verification.get("errors") == []
-            and verification.get("schemaValidation", {}).get("status") == "Success"
+            and "verification" not in body and "schemaValidation" not in body
             and len(view(body).get("credentialSchema", [])) == (0 if envelope else 1))
+
+
+def verification(body, mechanism, status):
+    return (isinstance(body, dict) and body.get("mechanism") == mechanism
+            and body.get("status") == status and isinstance(body.get("verifiedAt"), str)
+            and body.get("schemaValidation", {}).get("status") == "Success"
+            and (body.get("errors") == [] if status == "VERIFIED"
+                 else "Invalid Data Integrity signature" in body.get("errors", [])))
+
+
+def verify(label, secured_bytes, mechanism, status, origin):
+    result = capture(credential_url + "/v1/credential-verifications", media_type=mechanism, secured=secured_bytes)
+    if not verification(result[4], mechanism, status):
+        raise RuntimeError(f"Standalone verification failed: {label}: {result[4]}")
+    extra.append((label, "POST secured VC bytes for independent proof and schema results. " + origin,
+                  "Cryptographic success under a public demo key is not issuer trust or ledger consensus.", result))
 
 
 def subject(body):
@@ -144,10 +168,10 @@ def before_now(value):
     return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")) < datetime.datetime.now(datetime.timezone.utc)
 
 
-add("#204 base", "Read a structural placeholder envelope with Party holder and DemoIssuer anchorer.", "Does not prove issuer control or signature verification.", credential("urn:demo:scenario:base-credential"), lambda body: enveloped(body) and exact_id("urn:demo:scenario:base-credential")(body) and body.get("verification", {}).get("status") == "INDETERMINATE" and body.get("verification", {}).get("schemaValidation", {}).get("status") == "Indeterminate" and body.get("canton", {}).get("anchorers") == [issuer])
-add("#204 external VC", "Read the signed EdDSA vc+jwt envelope and independent offline verification and local schema results.", "Does not prove external trust, live status, or W3C conformance.", credential("urn:demo:scenario:external-did"), lambda body: secured(body, "urn:demo:scenario:external-did", "application/vc+jwt", True) and body.get("canton", {}).get("holders") == [] and body.get("canton", {}).get("anchorers") == [anchorer])
-add("#204 holderless", "Read the signed embedded eddsa-jcs-2022 proof, holderless subject, offline verification and local schema result.", "Does not prove holder delegation, external trust or JSON-LD processing.", credential("urn:demo:scenario:external-holderless"), lambda body: secured(body, "urn:demo:scenario:external-holderless", "eddsa-jcs-2022") and anchored_external(body, "urn:demo:scenario:external-holderless", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 85)
-add("#204 tampered", "Read the seeded score-86 document whose proof signed score 85 and inspect independent failed signature and successful schema results.", "Does not prove external trust, remote schema validation or W3C conformance.", credential("urn:demo:scenario:external-tampered"), lambda body: vc2(body) and anchored_external(body, "urn:demo:scenario:external-tampered", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 86 and view(body).get("proof", {}).get("cryptosuite") == "eddsa-jcs-2022" and body.get("verification", {}).get("status") == "FAILED" and "Invalid Data Integrity signature" in body.get("verification", {}).get("errors", []) and not any(error.startswith("Projection mismatch:") for error in body["verification"]["errors"]) and body["verification"].get("schemaValidation", {}).get("status") == "Success")
+add("#204 base", "Read a structural placeholder envelope with Party holder and DemoIssuer anchorer, without inline proof evaluation.", "No proof evaluation is performed on this structural placeholder GET.", credential("urn:demo:scenario:base-credential"), lambda body: enveloped(body) and exact_id("urn:demo:scenario:base-credential")(body) and "verification" not in body and "schemaValidation" not in body and body.get("canton", {}).get("anchorers") == [issuer])
+add("#204 external VC", "Read the signed EdDSA vc+jwt envelope without an inline proof result.", "Does not prove external trust, live status, or W3C conformance.", credential("urn:demo:scenario:external-did"), lambda body: secured(body, "urn:demo:scenario:external-did", True) and body.get("canton", {}).get("holders") == [] and body.get("canton", {}).get("anchorers") == [anchorer])
+add("#204 holderless", "Read the signed embedded eddsa-jcs-2022 proof and holderless subject without inline verification.", "Does not prove holder delegation, external trust or JSON-LD processing.", credential("urn:demo:scenario:external-holderless"), lambda body: secured(body, "urn:demo:scenario:external-holderless") and anchored_external(body, "urn:demo:scenario:external-holderless", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 85)
+add("#204 tampered", "Read the seeded score-86 document whose proof signed score 85 without inline verification.", "Does not prove external trust, remote schema validation or W3C conformance.", credential("urn:demo:scenario:external-tampered"), lambda body: vc2(body) and anchored_external(body, "urn:demo:scenario:external-tampered", view(body)["issuer"], None) and subject(body).get("achievement", {}).get("score") == 86 and view(body).get("proof", {}).get("cryptosuite") == "eddsa-jcs-2022" and "verification" not in body and "schemaValidation" not in body)
 add("#204 generic profile", "Read a Party subject Alice and a different Party holder Bob.", "Does not prove that subject and holder are interchangeable.", credential("urn:demo:scenario:generic-party-profile"), lambda body: exact_id("urn:demo:scenario:generic-party-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [party("DemoHolderB")])
 add("#169 profile", "Read Alice as both Party subject and holder with cip-<nr>/ claim keys.", "Does not prove all profile claims are externally attested.", credential("urn:demo:scenario:cip169-profile"), lambda body: exact_id("urn:demo:scenario:cip169-profile")(body) and party_subject(body, alice) and body.get("canton", {}).get("holders") == [alice] and any(key.startswith("cip-") for key in claims(body)))
 add("#209 names", "Read Alice's name credential by exact logical ID.", "Does not prove every name is resolvable on every network.", credential("urn:demo:name:alice.canton"), exact_id("urn:demo:name:alice.canton"))
@@ -155,7 +179,7 @@ add("#209 resolution", "Resolve alice.canton on localnet.", "Does not prove DNS 
 add("Reverse resolve Alice", "Reverse-resolve Alice's exact Canton Party subject ID on localnet.", "Does not prove issuer or holder IDs are valid substitutes for subject IDs.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve DID", "Reverse-resolve that same Alice subject through DID assertions.", "Does not prove that every DID alias is conflict-free.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": alice, "network": "localnet", "source": "did"}), lambda body: isinstance(body, list) and any(item.get("party_id") == alice for item in body))
 add("Reverse resolve unbound", "Reverse-resolve the unbound DemoIssuer Party subject ID.", "Does not prove that a 404 is expected for an unbound party; an empty array is the expected 200 response.", credential_url + "/v1/reverse-resolve?" + urlencode({"party": issuer, "network": "localnet"}), lambda body: body == [])
-add("#249", "Read the unverified DNS fixture as a structural placeholder envelope.", "Does not expose the six underlying cprp/* claims in the envelope, verify DNS or prove issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and enveloped(body) and body.get("verification", {}).get("status") == "INDETERMINATE")
+add("#249", "Read the unverified DNS fixture as a structural placeholder envelope without calculated proof status.", "Does not expose the six underlying cprp/* claims in the envelope, verify DNS or prove issuer control.", credential("urn:demo:scenario:dns-unverified"), lambda body: exact_id("urn:demo:scenario:dns-unverified")(body) and enveloped(body) and "verification" not in body and "schemaValidation" not in body)
 add("DID", "Read the DSO DID document advertising the cross-product services.", "Does not prove that an advertised service endpoint is reachable from this host.", did_url + "/v1/dids/dso")
 add("DID assertions", "Read the DID-side assertion for Alice's localnet alias.", "Does not prove that conflicting aliases are silently resolved.", did_url + "/v1/demo-name-assertions?" + urlencode({"alias": "urn:fqpn:localnet:demo:alice.canton"}), lambda body: isinstance(body, list) and any(item.get("subject") == alice for item in body))
 
@@ -177,6 +201,7 @@ if did_document[4].get("did") != "did:canton:" + dso:
 registry = capture(credential_url + "/v1/credential-registries")
 if not any(item.get("registryId") == dso for item in registry[4].get("items", [])):
     raise RuntimeError("Credentials registry admin differs from ledger DSO")
+reject_inline_results(registered[4], credential_url + "/v1/registered-credentials/urn:demo:credential:000")
 if not vc2(registered[4]):
     raise RuntimeError("Registered credential is not unsigned VC2-shaped JSON")
 
@@ -185,6 +210,8 @@ if not vc2(registered[4]):
 extra = []
 def route(label, objective, limitation, url, check, expected="200"):
     result = capture(url, expected)
+    if "/v1/registered-credentials/" in url:
+        reject_inline_results(result[4], url)
     if not check(result[4]):
         raise RuntimeError(f"Response failed semantic check for {label}: {url}\n{json.dumps(result[4], indent=2)}")
     extra.append((label, objective, limitation, result))
@@ -192,7 +219,7 @@ def route(label, objective, limitation, url, check, expected="200"):
 for family in ("credentials", "registered-credentials"):
     route(f"Credentials {family} first page", f"Read the default first page of {family} records from PQS.",
           "Pagination beyond this page or complete historical coverage.", credential_url + "/v1/" + family,
-          lambda body: isinstance(body, dict) and body.get("page") == 0 and body.get("pageSize") == 50 and isinstance(body.get("items"), list) and len(body["items"]) == 50)
+           lambda body: isinstance(body, dict) and body.get("page") == 0 and body.get("pageSize") == 50 and isinstance(body.get("items"), list) and len(body["items"]) == 50 and all("verification" not in item and "schemaValidation" not in item for item in body["items"]))
 route("Credentials registry by ID", "Read the DSO credential registry using the registry ID returned by the live list.",
       "Another registry or independent datastore.", credential_url + "/v1/credential-registries/" + quote(dso, safe=""),
       lambda body: isinstance(body, dict) and body.get("registryId") == dso)
@@ -203,7 +230,10 @@ for family in ("credential-events", "registered-credential-events"):
 
 expired_id = "urn:demo:scenario:expired-registration"
 intrinsic_expired = capture(credential(expired_id))
-registered_expired = capture(credential_url + "/v1/registered-credentials/" + quote(expired_id, safe=""))
+registered_expired_url = credential_url + "/v1/registered-credentials/" + quote(expired_id, safe="")
+registered_expired = capture(registered_expired_url)
+reject_inline_results(intrinsic_expired[4], credential(expired_id))
+reject_inline_results(registered_expired[4], registered_expired_url)
 def expiry_check(body, registered_view):
     if not (vc2(body) and exact_id(expired_id)(body)
             and view(body).get("issuer") == issuer
@@ -221,22 +251,19 @@ extra.extend([
     ("Expired registration registered", "Read the past registration expiry beside that same still-future intrinsic validity.",
      "The underlying intrinsic credential has expired.", registered_expired),
 ])
-for suffix, mechanism, envelope in (("external-did", "application/vc+jwt", True),
-                                    ("external-holderless", "eddsa-jcs-2022", False)):
+for suffix, envelope in (("external-did", True), ("external-holderless", False)):
     logical_id = "urn:demo:scenario:" + suffix
-    route("Registered signed " + suffix, "Read the registered secured credential and separate registration.",
+    route("Registered signed " + suffix, "Read the registered secured material and separate registration without inline verification.",
           "Registration does not independently authenticate a proof.",
           credential_url + "/v1/registered-credentials/" + quote(logical_id, safe=""),
-          lambda body, logical_id=logical_id, mechanism=mechanism, envelope=envelope:
-          secured(body, logical_id, mechanism, envelope) and isinstance(body.get("registration", {}).get("registryAdmin"), str))
+          lambda body, logical_id=logical_id, envelope=envelope:
+          secured(body, logical_id, envelope) and isinstance(body.get("registration", {}).get("registryAdmin"), str))
 
-route("Registered tampered proof", "Read the registered score-86 document and separate failed signature from successful schema validation.",
+route("Registered tampered proof", "Read the registered score-86 document without inline signature evaluation.",
       "Registration does not repair an invalid signature.",
       credential_url + "/v1/registered-credentials/" + quote("urn:demo:scenario:external-tampered", safe=""),
       lambda body: exact_id("urn:demo:scenario:external-tampered")(body)
-      and body.get("verification", {}).get("status") == "FAILED"
-      and "Invalid Data Integrity signature" in body["verification"].get("errors", [])
-      and body["verification"].get("schemaValidation", {}).get("status") == "Success"
+       and "verification" not in body and "schemaValidation" not in body
       and isinstance(body.get("registration", {}).get("registryAdmin"), str))
 
 for family in ("did-registries", "credential-registries", "credentials", "asset-registries", "assets"):
@@ -266,19 +293,34 @@ credential_host_results = [capture(host + "/v1/credentials/" + quote(shared_id, 
 if any(not vc2(result[4]) or result[4].get("credentialId") != shared_id or result[4] != credential_host_results[0][4] for result in credential_host_results):
     raise RuntimeError("Four Credentials hosts disagree on the VC2 credential")
 credential_bft = capture(credential_bft_url + "/v1/bft/credentials/" + quote(shared_id, safe=""))
-if credential_bft[4].get("result") != credential_host_results[0][4] or credential_bft[4].get("quorum", {}).get("agreement") != "4-of-4":
+if (credential_bft[4].get("result") != credential_host_results[0][4]
+        or "verification" in credential_bft[4].get("result", {})
+        or credential_bft[4].get("quorum", {}).get("agreement") != "4-of-4"):
     raise RuntimeError("Credentials BFT reader did not agree with four hosts")
-for suffix, mechanism, envelope in (("external-did", "application/vc+jwt", True),
-                                    ("external-holderless", "eddsa-jcs-2022", False)):
+for suffix, envelope in (("external-did", True), ("external-holderless", False)):
     logical_id = "urn:demo:scenario:" + suffix
     host_result = capture(credential(logical_id))
     reader_result = capture(credential_bft_url + "/v1/bft/credentials/" + quote(logical_id, safe=""))
-    if (not secured(host_result[4], logical_id, mechanism, envelope)
-            or reader_result[4].get("result") != host_result[4]
+    if (not secured(host_result[4], logical_id, envelope)
+             or reader_result[4].get("result") != host_result[4]
+             or "verification" in reader_result[4].get("result", {})
             or reader_result[4].get("quorum", {}).get("agreement") != "4-of-4"):
         raise RuntimeError("Signed fixture not preserved by Credentials BFT: " + suffix)
-    extra.append(("Credentials BFT signed " + suffix, "Compare a verified seeded response through four Credentials hosts.",
-                  "Shared PQS is not independent trust or signature verification by a separate authority.", reader_result))
+    extra.append(("Credentials BFT signed " + suffix, "Compare seeded signed material through four Credentials hosts without proof results.",
+                   "Shared PQS agrees on data, not proof verification or issuer trust.", reader_result))
+
+jwt_url = rows[1][3][4]["credential"]["id"]
+if not jwt_url.startswith("data:application/vc+jwt,"):
+    raise RuntimeError("Expected signed JWT data URL")
+verify("Registry-derived vc+jwt", unquote(jwt_url.split(",", 1)[1]), "application/vc+jwt", "VERIFIED", "Source: registry GET envelope data URL.")
+for filename, status in (("external-did.jwt", "VERIFIED"), ("external-holderless.json", "VERIFIED"), ("external-tampered.json", "FAILED")):
+    mechanism = "application/vc+jwt" if filename.endswith(".jwt") else "application/vc"
+    verify("External fixture " + filename, (fixtures / filename).read_text(encoding="utf-8"), mechanism, status, "Source: checked-in external fixture `demo/fixtures/" + filename + "`, without a registry lookup.")
+for index, label, status in ((2, "holderless", "VERIFIED"), (3, "tampered", "FAILED")):
+    # The GET returns parsed JSON; JCS ignores whitespace and key order, not claim changes.
+    document = rows[index][3][4]["credential"]
+    verify("Registry-derived " + label, json.dumps(document, ensure_ascii=False), "application/vc", status,
+           "Source: registry GET embedded proof; JSON transport is reserialized (JCS canonicalizes object key order and whitespace).")
 credential_bft_missing = capture(credential_bft_url + "/v1/bft/credentials/" + quote("urn:demo:absent", safe=""), "404")
 if credential_bft_missing[4].get("error") != "not_found" or credential_bft_missing[4].get("status") != 404:
     raise RuntimeError("Credentials BFT missing-id semantics changed")
@@ -380,7 +422,7 @@ def render_result(label, objective, limitation, result):
     rendered = json.dumps(body, indent=2, ensure_ascii=False)
     if json.loads(rendered) != json.loads(raw_body) or ("\n" not in rendered and rendered not in ("[]", "{}")) or any((len(line) - len(line.lstrip(" "))) % 2 for line in rendered.splitlines()):
         raise RuntimeError(f"Response failed raw-body/indentation validation: {label}")
-    return [f"### {label}", "", f"Objective: {objective}", f"Does not prove: {limitation}", "", "```sh", shlex.join(command), "```", f"HTTP status: {status}", f"Content-Type: {content_type}", f"curl exit code: {exit_code}", "", "```json", rendered, "```", ""]
+    return [f"### {label}", "", f"Objective: {objective}", f"Does not prove: {limitation}", "", "```sh", shlex.join(command) + (" # stdin: secured VC bytes from source named in objective" if "@-" in command else ""), "```", f"HTTP status: {status}", f"Content-Type: {content_type}", f"curl exit code: {exit_code}", "", "```json", rendered, "```", ""]
 
 # Insert the new route records after the existing scenarios, retaining their original order.
 scenario_lines = []

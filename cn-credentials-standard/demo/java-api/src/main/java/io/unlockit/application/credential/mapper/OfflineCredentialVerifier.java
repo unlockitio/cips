@@ -28,25 +28,20 @@ public final class OfflineCredentialVerifier {
 
   public OfflineCredentialVerifier(Clock clock) { this.clock = clock; }
 
-  public VerificationResponse verify(JsonNode document, JsonNode index, String mechanism,
-      String compact, JsonNode summaries) {
+  public VerificationResponse verify(byte[] secured, String mechanism) {
     var errors = new ArrayList<String>();
     var warnings = new ArrayList<String>();
+    warnings.add("Cryptographic proof under demo did:key only; issuer trust and factual truth are not assessed");
     String controller = null;
     String status = "INDETERMINATE";
-    if (document == null) document = JSON.createObjectNode();
-    if ("embedded-malformed".equals(mechanism)) {
-      return new VerificationResponse(mechanism, "FAILED", null, List.of("Malformed secured JSON document"),
-          warnings, schema(document));
+    JsonNode document = JSON.createObjectNode();
+    String compact = new String(secured, StandardCharsets.UTF_8);
+    if ("application/vc".equals(mechanism)) {
+      try { document = JSON.readTree(secured); }
+      catch (Exception e) { errors.add("Malformed secured JSON document"); status = "FAILED"; }
     }
-    if ("unsecured".equals(mechanism) && document.path("issuer").asText().startsWith("did:"))
-      warnings.add("No signature; this is an unsecured projection");
     try {
       if ("application/vc+jwt".equals(mechanism)) {
-        if (compact.startsWith("placeholder.jws.")) {
-          warnings.add("Structural placeholder; no signed JWT is available");
-          return new VerificationResponse(mechanism, status, null, errors, warnings, schema(document));
-        }
         String[] parts = compact.split("\\.", -1);
         if (parts.length != 3) throw new IllegalArgumentException("Malformed compact JWS");
         JsonNode header = JSON.readTree(decodeUrl(parts[0]));
@@ -67,16 +62,13 @@ public final class OfflineCredentialVerifier {
             errors.add("Invalid JWS signature");
           status = errors.isEmpty() ? "VERIFIED" : "FAILED";
         }
-      } else if ("eddsa-jcs-2022".equals(mechanism)) {
+      } else if ("application/vc".equals(mechanism) && errors.isEmpty()) {
         JsonNode proof = document.path("proof");
         if (!document.isObject()) throw new IllegalArgumentException("Secured document must be a JSON object");
         if (!proof.isObject() || !"DataIntegrityProof".equals(proof.path("type").asText())
             || !"eddsa-jcs-2022".equals(proof.path("cryptosuite").asText())
             || !"assertionMethod".equals(proof.path("proofPurpose").asText())) {
           warnings.add("Unsupported Data Integrity proof");
-        } else if (summaries == null || !summaries.isObject() || !proofSummaryMatches(proof, summaries)) {
-          errors.add("Proof summary differs from secured document");
-          status = "FAILED";
         } else {
           controller = controller(proof.path("verificationMethod").asText(), document.path("issuer").asText());
           ObjectNode config = ((ObjectNode) proof).deepCopy();
@@ -93,25 +85,22 @@ public final class OfflineCredentialVerifier {
       } else {
         warnings.add("Unsupported or absent securing mechanism");
       }
-      if (status.equals("VERIFIED") || status.equals("FAILED")) {
+      if (status.equals("VERIFIED") || (status.equals("FAILED") && document.isObject() && document.size() > 0)) {
         if (!document.path("@context").isArray() || !"https://www.w3.org/ns/credentials/v2".equals(document.path("@context").path(0).asText())
             || !document.path("type").isArray() || !arrayContains(document.path("type"), "VerifiableCredential"))
           errors.add("Invalid VC context or type");
-        for (String field : List.of("id", "issuer", "type", "validFrom", "validUntil", "credentialSubject", "credentialSchema")) {
-          if (!equivalent(document.path(field), index.path(field))) errors.add("Projection mismatch: " + field);
-        }
         checkTime(document.path("validFrom"), document.path("validUntil"), errors);
         if (!errors.isEmpty()) status = "FAILED";
       }
     } catch (UnsupportedOperationException e) {
       warnings.add(e.getMessage());
-      status = errors.isEmpty() ? "INDETERMINATE" : "FAILED";
+      status = "INDETERMINATE";
     } catch (Exception e) {
       errors.add("Malformed or invalid secured credential: " + e.getMessage());
       status = "FAILED";
     }
-    return new VerificationResponse(mechanism, status, controller, errors, warnings,
-        schema("application/vc+sd-jwt".equals(mechanism) || "application/vc+cose".equals(mechanism) ? index : document));
+    return new VerificationResponse(mechanism, status, clock.instant(), controller, errors, warnings,
+        schema(document));
   }
 
   private VerificationResponse.SchemaValidation schema(JsonNode document) {
@@ -146,38 +135,9 @@ public final class OfflineCredentialVerifier {
     } catch (java.time.format.DateTimeParseException e) { errors.add("Invalid validity timestamp"); }
   }
 
-  private static boolean proofSummaryMatches(JsonNode proof, JsonNode summary) {
-    for (String key : List.of("cryptosuite", "created", "expires", "verificationMethod", "proofPurpose")) {
-      if (!equivalent(proof.path(key), summary.path(key))) return false;
-    }
-    return equivalent(proof.path("type"), summary.path("proofType"))
-        && equivalent(proof.path("id"), summary.path("proofId"))
-        && (!summary.has("previousProof") || equivalent(proof.path("previousProof"), summary.path("previousProof")));
-  }
-
   private static boolean arrayContains(JsonNode array, String text) {
     for (JsonNode item : array) if (text.equals(item.asText())) return true;
     return false;
-  }
-
-  private static boolean equivalent(JsonNode a, JsonNode b) {
-    if (a.isMissingNode() || a.isNull()) return b.isMissingNode() || b.isNull() || (b.isArray() && b.isEmpty());
-    if (a.isNumber() && b.isNumber()) return a.decimalValue().compareTo(b.decimalValue()) == 0;
-    if (a.isArray() && b.isArray()) {
-      if (a.size() != b.size()) return false;
-      for (int i = 0; i < a.size(); i++) if (!equivalent(a.get(i), b.get(i))) return false;
-      return true;
-    }
-    if (a.isObject() && b.isObject()) {
-      if (a.size() != b.size()) return false;
-      var fields = a.fields();
-      while (fields.hasNext()) {
-        var entry = fields.next();
-        if (!equivalent(entry.getValue(), b.path(entry.getKey()))) return false;
-      }
-      return true;
-    }
-    return a.equals(b);
   }
 
   private static String controller(String vm, String issuer) {

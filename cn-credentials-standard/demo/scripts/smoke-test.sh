@@ -7,6 +7,20 @@ NETWORK=${CREDENTIALS_NETWORK:-localnet}
 # Set this to the empty string to assert the absent-capability behaviour instead.
 CREDENTIALS_DID_ASSERTIONS_URL=${CREDENTIALS_DID_ASSERTIONS_URL-http://did-api-1:8080/v1/demo-name-assertions}
 status() { curl --silent --output /dev/null --write-out '%{http_code}' "$1"; }
+verify() {
+  curl --fail --silent --show-error --request POST "$BASE/v1/credential-verifications" \
+    --header "Content-Type: $1" --data-binary @"$2"
+}
+fixture_dir=$(dirname "$0")/../fixtures
+check_result() {
+  printf '%s' "$1" | jq -e --arg status "$2" --arg mechanism "$3" '
+    .status == $status and .mechanism == $mechanism and
+    (.verifiedAt | type == "string") and
+    .schemaValidation.status == "Success" and
+    (if $status == "FAILED" then (.errors | index("Invalid Data Integrity signature") != null)
+     else .errors == [] end)
+  ' >/dev/null
+}
 
 until curl --fail --silent "$BASE/q/health/ready" >/dev/null; do
   printf '%s\n' "Waiting for PQS-backed API readiness..."
@@ -50,8 +64,9 @@ printf '%s' "$intrinsic" | jq -e '
    (.credential.issuer | type == "string") and
    (.credential.credentialSubject | type == "array") and
    (.canton.holders | type == "array") and
-   (.canton.anchorers[0] | type == "string") and
-  (has("registration") | not)
+    (.canton.anchorers[0] | type == "string") and
+   (has("verification") | not) and (has("schemaValidation") | not) and
+   (has("registration") | not)
 ' >/dev/null
 
 for family in credentials registered-credentials; do
@@ -62,23 +77,28 @@ for family in credentials registered-credentials; do
       (.canton.holders == []) and
       (.canton.anchorers | length == 1) and
       (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
-      .verification.status == "VERIFIED" and
-      .verification.schemaValidation.status == "Success" and
-      (.verification.errors == []) and
+       (has("verification") | not) and (has("schemaValidation") | not) and
       (if $family == "registered-credentials" then (.registration.registryAdmin | type == "string")
        else (has("registration") | not) end) and
       (if $scenario == "external-did" then
-        .verification.mechanism == "application/vc+jwt" and
+
         .credential.type == "EnvelopedVerifiableCredential" and
         (.credential.id | startswith("data:application/vc+jwt,"))
       else
-        .verification.mechanism == "eddsa-jcs-2022" and
+
         (.credential.issuer | startswith("did:key:")) and
         (.credential.credentialSubject[0] | has("id") | not) and
         .credential.credentialSubject[0].achievement.score == 85 and
         .credential.proof.cryptosuite == "eddsa-jcs-2022"
       end)
     ' >/dev/null
+    if [ "$scenario" = external-did ]; then
+      jwt=$(printf '%s' "$anchored" | jq -er '.credential.id | select(startswith("data:application/vc+jwt,")) | split(",")[1]')
+      result=$(printf '%s' "$jwt" | curl --fail --silent --show-error --request POST "$BASE/v1/credential-verifications" --header 'Content-Type: application/vc+jwt' --data-binary @-)
+      check_result "$result" VERIFIED application/vc+jwt
+    else
+      check_result "$(verify application/vc "$fixture_dir/external-holderless.json")" VERIFIED eddsa-jcs-2022
+    fi
   done
   tampered=$(curl --fail --silent "$BASE/v1/$family/urn:demo:scenario:external-tampered")
   printf '%s' "$tampered" | jq -e --arg family "$family" '
@@ -89,23 +109,20 @@ for family in credentials registered-credentials; do
     .canton.holders == [] and
     (.canton.anchorers | length == 1) and
     (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
-    .verification.status == "FAILED" and
-    (.verification.errors | index("Invalid Data Integrity signature") != null) and
-    (.verification.errors | all(startswith("Projection mismatch:") | not)) and
-    .verification.schemaValidation.status == "Success" and
+    (has("verification") | not) and (has("schemaValidation") | not) and
     (if $family == "registered-credentials" then (.registration.registryAdmin | type == "string")
      else (has("registration") | not) end)
   ' >/dev/null
+  check_result "$(verify application/vc "$fixture_dir/external-tampered.json")" FAILED eddsa-jcs-2022
 done
+check_result "$(verify application/vc+jwt "$fixture_dir/external-did.jwt")" VERIFIED application/vc+jwt
+check_result "$(verify application/vc "$fixture_dir/external-holderless.json")" VERIFIED eddsa-jcs-2022
+check_result "$(verify application/vc "$fixture_dir/external-tampered.json")" FAILED eddsa-jcs-2022
 placeholder=$(curl --fail --silent "$BASE/v1/credentials/urn:demo:scenario:base-credential")
 printf '%s' "$placeholder" | jq -e '
-  .verification.status == "INDETERMINATE" and
-  .verification.mechanism == "application/vc+jwt" and
-  .verification.controller == null and
-  .verification.errors == [] and
-  (.verification.warnings | index("Structural placeholder; no signed JWT is available") != null) and
-  .verification.schemaValidation.status == "Indeterminate" and
-  .credential.type == "EnvelopedVerifiableCredential"
+  .credentialId == "urn:demo:scenario:base-credential" and
+  .credential.type == "EnvelopedVerifiableCredential" and
+  (has("verification") | not) and (has("schemaValidation") | not)
 ' >/dev/null
 expired_registration=$(curl --fail --silent "$BASE/v1/registered-credentials/urn:demo:scenario:expired-registration")
 printf '%s' "$expired_registration" | jq -e '
@@ -128,7 +145,7 @@ printf '%s' "$registered" | jq -e '
 
 for family in credentials registered-credentials; do
   first=$(curl --fail --silent "$BASE/v1/$family?page=0&pageSize=50")
-  printf '%s' "$first" | jq -e '.page == 0 and .pageSize == 50 and (.items | length == 50) and .hasNext' >/dev/null
+  printf '%s' "$first" | jq -e '.page == 0 and .pageSize == 50 and (.items | length == 50) and .hasNext and all(.items[]; (has("verification") | not) and (has("schemaValidation") | not))' >/dev/null
   token=$(printf '%s' "$first" | jq -r '.nextPageToken')
   snapshot=$(printf '%s' "$first" | jq -r '.snapshotOffset')
   second=$(curl --fail --silent --get "$BASE/v1/$family" --data-urlencode "nextPageToken=$token" --data-urlencode 'pageSize=50')
@@ -136,7 +153,7 @@ for family in credentials registered-credentials; do
   jump=$(curl --fail --silent --get "$BASE/v1/$family" --data-urlencode "nextPageToken=$token" --data-urlencode 'page=1' --data-urlencode 'pageSize=50')
   [ "$(printf '%s' "$second" | jq -c '[.items[].contractId]')" = "$(printf '%s' "$jump" | jq -c '[.items[].contractId]')" ]
   curl --fail --silent "$BASE/v1/$family?state=all&createdFrom=2000-01-01T00:00:00Z" | jq -e '.snapshotOffset != null and all(.items[]; .lifecycle.createdAtOffset != null)' >/dev/null
-  curl --fail --silent "$BASE/v1/$family?state=archived" | jq -e 'all(.items[]; .lifecycle.state == "archived")' >/dev/null
+  curl --fail --silent "$BASE/v1/$family?state=archived" | jq -e 'all(.items[]; .lifecycle.state == "archived" and (has("verification") | not) and (has("schemaValidation") | not))' >/dev/null
   [ "$(status "$BASE/v1/$family?nextPageToken=invalid")" = 400 ]
   [ "$(status "$BASE/v1/$family?createdFrom=invalid")" = 400 ]
   max_page=$(curl --fail --silent "$BASE/v1/$family?page=0&pageSize=100")

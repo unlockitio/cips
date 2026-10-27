@@ -201,16 +201,10 @@ public class CredentialBftReader {
         || !body.path("credentialId").isTextual() || !id.equals(body.path("credentialId").asText())
         || !body.path("lifecycleState").isTextual() || !List.of("active", "archived").contains(body.path("lifecycleState").asText())) return false;
     JsonNode credential = body.path("credential");
-    JsonNode verification = body.path("verification");
-    if (body.has("verification") && (!verification.isObject()
-        || !List.of("VERIFIED", "FAILED", "INDETERMINATE").contains(verification.path("status").asText())
-        || !verification.path("schemaValidation").isObject()
-        || !List.of("Success", "Failure", "Indeterminate").contains(verification.path("schemaValidation").path("status").asText()))) return false;
-    if (!credential.isObject()) return false;
+    if (body.has("verification") || body.has("schemaValidation") || !credential.isObject()) return false;
     boolean enveloped = "EnvelopedVerifiableCredential".equals(credential.path("type").asText());
     if (enveloped) {
-      if (!credential.path("@context").isObject() || !credential.path("id").asText().startsWith("data:application/vc+jwt,")
-          || !body.has("verification")) return false;
+      if (!credential.path("@context").isObject() || !credential.path("id").asText().startsWith("data:application/vc+")) return false;
     } else {
       if (!credential.path("id").isTextual() || !id.equals(credential.path("id").asText())
           || !credential.path("issuer").isTextual() || credential.path("issuer").asText().isBlank()

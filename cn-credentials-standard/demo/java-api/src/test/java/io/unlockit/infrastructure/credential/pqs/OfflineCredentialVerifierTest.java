@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unlockit.application.credential.mapper.CredentialResponseMapper;
+import io.unlockit.application.credential.mapper.OfflineCredentialVerifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -15,7 +16,8 @@ import org.junit.jupiter.api.Test;
 class OfflineCredentialVerifierTest {
   private final ObjectMapper json = new ObjectMapper();
   private final PqsCredentialQueryClient pqs = new PqsCredentialQueryClient(null, json);
-  private final CredentialResponseMapper mapper = new CredentialResponseMapper(
+  private final CredentialResponseMapper mapper = new CredentialResponseMapper();
+  private final OfflineCredentialVerifier verifier = new OfflineCredentialVerifier(
       Clock.fixed(Instant.parse("2027-01-01T00:00:00Z"), ZoneOffset.UTC));
   private Path fixture(String name) { return Path.of("../fixtures", name); }
 
@@ -80,14 +82,17 @@ class OfflineCredentialVerifierTest {
     var wrapping = (com.fasterxml.jackson.databind.node.ObjectNode) envelope("EnvelopedProof", "encoded", jwt);
     ((com.fasterxml.jackson.databind.node.ObjectNode) wrapping.path("value")).put("mediaType", "application/vc+jwt");
     JsonNode response = mapped(payload(source, wrapping.toString()));
-    assertEquals("VERIFIED", response.at("/verification/status").asText(), response.toString());
-    assertEquals("Success", response.at("/verification/schemaValidation/status").asText());
+    assertFalse(response.has("verification"));
+    var result = verifier.verify(jwt.getBytes(java.nio.charset.StandardCharsets.UTF_8), "application/vc+jwt");
+    assertEquals("VERIFIED", result.status());
+    assertEquals("Success", result.schemaValidation().status());
     assertEquals("data:application/vc+jwt," + jwt, response.at("/credential/id").asText());
     assertEquals("EnvelopedVerifiableCredential", response.at("/credential/type").asText());
-    assertEquals(source.path("issuer").asText(), response.at("/verification/controller").asText());
+    assertEquals(source.path("issuer").asText(), result.controller());
     var changed = (com.fasterxml.jackson.databind.node.ObjectNode) payload(source, wrapping.toString());
     changed.put("id", "urn:wrong");
-    assertEquals("FAILED", mapped(changed).at("/verification/status").asText());
+    assertEquals("VERIFIED", verifier.verify(jwt.getBytes(java.nio.charset.StandardCharsets.UTF_8), "application/vc+jwt").status());
+    assertEquals("urn:wrong", mapped(changed).path("credentialId").asText());
   }
 
   @Test void unsupportedPlaceholderAndSchemaDigestRemainIndependent() throws Exception {
@@ -97,17 +102,17 @@ class OfflineCredentialVerifierTest {
     ((com.fasterxml.jackson.databind.node.ObjectNode) wrapping.path("value")).put("mediaType", "application/vc+sd-jwt");
     var input = (com.fasterxml.jackson.databind.node.ObjectNode) payload(source, wrapping.toString());
     JsonNode unsupported = mapped(input);
-    assertEquals("INDETERMINATE", unsupported.at("/verification/status").asText());
+    assertFalse(unsupported.has("verification"));
+    assertEquals("INDETERMINATE", verifier.verify("not-a-jws".getBytes(), "application/vc+sd-jwt").status());
+    assertEquals("INDETERMINATE", verifier.verify("not-a-cose".getBytes(), "application/vc+cose").status());
     var placeholder = (com.fasterxml.jackson.databind.node.ObjectNode) envelope("EnvelopedProof", "encoded", "placeholder.jws.scenario-base-credential");
     ((com.fasterxml.jackson.databind.node.ObjectNode) placeholder.path("value")).put("mediaType", "application/vc+jwt");
     JsonNode structural = mapped(payload(source, placeholder.toString()));
-    assertEquals("INDETERMINATE", structural.at("/verification/status").asText());
-    assertEquals("Indeterminate", structural.at("/verification/schemaValidation/status").asText());
-    assertEquals("Success", unsupported.at("/verification/schemaValidation/status").asText());
-    ((com.fasterxml.jackson.databind.node.ObjectNode) input.at("/credentialSchema/0")).put("digestSRI", "sha256-wrong");
-    assertEquals("Failure", mapped(input).at("/verification/schemaValidation/status").asText());
-    ((com.fasterxml.jackson.databind.node.ObjectNode) input.at("/securing/value")).put("mediaType", "application/vc+jwt");
-    assertEquals("FAILED", mapped(input).at("/verification/status").asText());
+    assertFalse(structural.has("verification"));
+    assertEquals("FAILED", verifier.verify("placeholder.jws.scenario-base-credential".getBytes(), "application/vc+jwt").status());
+    var badSchema = (com.fasterxml.jackson.databind.node.ObjectNode) source.deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) badSchema.at("/credentialSchema/0")).put("digestSRI", "sha256-wrong");
+    assertEquals("Failure", verifier.verify(badSchema.toString().getBytes(), "application/vc").schemaValidation().status());
   }
 
   @Test void jcsCanonicalizesRfc8785NumberAndUtf16KeyOrdering() throws Exception {
@@ -121,12 +126,13 @@ class OfflineCredentialVerifierTest {
     JsonNode source = json.readTree(java.util.Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
     var wrapping = (com.fasterxml.jackson.databind.node.ObjectNode) envelope("EnvelopedProof", "encoded", jwt);
     ((com.fasterxml.jackson.databind.node.ObjectNode) wrapping.path("value")).put("mediaType", "application/vc+jwt");
-    JsonNode payload = payload(source, wrapping.toString());
-    var expired = new CredentialResponseMapper(Clock.fixed(Instant.parse("2031-01-01T00:00:00Z"), ZoneOffset.UTC));
-    assertEquals("FAILED", expired.toResponse(pqs.mapCredential("cid", payload.toString())).verification().status());
-    ((com.fasterxml.jackson.databind.node.ObjectNode) payload).set("issuer", json.createObjectNode()
-        .put("tag", "W3C_VC_Identifier").put("value", "did:key:zOther"));
-    assertEquals("FAILED", mapped(payload).at("/verification/status").asText());
+    var expired = new OfflineCredentialVerifier(Clock.fixed(Instant.parse("2031-01-01T00:00:00Z"), ZoneOffset.UTC));
+    assertEquals("FAILED", expired.verify(jwt.getBytes(), "application/vc+jwt").status());
+    var altered = (com.fasterxml.jackson.databind.node.ObjectNode) source.deepCopy();
+    altered.put("issuer", "did:key:zOther");
+    String[] parts = jwt.split("\\.");
+    String tampered = parts[0] + "." + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(altered.toString().getBytes()) + "." + parts[2];
+    assertEquals("FAILED", verifier.verify(tampered.getBytes(), "application/vc+jwt").status());
   }
 
   @Test void embeddedVerifiesAndTamperingFailsWhilePreservingOriginalDocument() throws Exception {
@@ -146,14 +152,15 @@ class OfflineCredentialVerifierTest {
       String securing = wrapping.toString();
       JsonNode projected = name.equals("external-holderless-tampered.json") ? source : json.readTree(secured);
       JsonNode response = mapped(payload(projected, securing));
-      assertEquals(name.contains("tampered") ? "FAILED" : "VERIFIED", response.at("/verification/status").asText(), response.toString());
+      var result = verifier.verify(secured.getBytes(java.nio.charset.StandardCharsets.UTF_8), "application/vc");
+      assertEquals(name.contains("tampered") ? "FAILED" : "VERIFIED", result.status(), result.toString());
       if (name.equals("external-tampered.json")) {
         assertEquals("urn:demo:scenario:external-tampered", response.at("/credentialId").asText());
-        assertTrue(response.at("/verification/errors").toString().contains("Invalid Data Integrity signature"));
-        assertFalse(response.at("/verification/errors").toString().contains("Projection mismatch"));
+        assertTrue(result.errors().contains("Invalid Data Integrity signature"));
       }
       assertEquals(json.readTree(secured), response.path("credential"));
-      assertEquals("Success", response.at("/verification/schemaValidation/status").asText());
+      assertEquals("Success", result.schemaValidation().status());
+      assertFalse(response.has("verification"));
     }
   }
 }

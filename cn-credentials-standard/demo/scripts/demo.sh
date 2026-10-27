@@ -42,23 +42,33 @@ check_credential() {
   local body
   body=$(fetch "$credentials/v1/credentials/$id")
   jq -e --arg id "$id" --arg status "$status" --arg mechanism "$mechanism" --arg score "$score" '
-    .credentialId == $id and .verification.status == $status and
-    .verification.mechanism == $mechanism and
-    .verification.schemaValidation.status == "Success" and
+    .credentialId == $id and (has("verification") | not) and (has("schemaValidation") | not) and
     .canton.holders == [] and (.canton.anchorers[0] | startswith("DemoAnchorer::")) and
     (if $mechanism == "application/vc+jwt" then
       .credential.type == "EnvelopedVerifiableCredential" and
       (.credential.id | startswith("data:application/vc+jwt,"))
      else .credential.proof.cryptosuite == "eddsa-jcs-2022" and
-      .credential.credentialSubject[0].achievement.score == ($score | tonumber) and
-      (.credential.credentialSubject[0] | has("id") | not) end) and
-    (if $status == "FAILED" then
-      (.verification.errors | index("Invalid Data Integrity signature") != null) and
-      (.verification.errors | all(startswith("Projection mismatch:") | not))
-     else .verification.errors == [] end)
+       .credential.credentialSubject[0].achievement.score == ($score | tonumber) and
+       (.credential.credentialSubject[0] | has("id") | not) end)
   ' <<<"$body" >/dev/null
+  local result
+  if [[ $mechanism == application/vc+jwt ]]; then
+    local jwt
+    jwt=$(jq -er '.credential.id | select(startswith("data:application/vc+jwt,")) | split(",")[1]' <<<"$body")
+    result=$(printf '%s' "$jwt" | curl --fail --silent --show-error --max-time 15 --request POST --header 'Content-Type: application/vc+jwt' --data-binary @- "$credentials/v1/credential-verifications")
+  else
+    local document
+    document=$(jq -ec --arg id "$id" '
+      select(.credentialId == $id) | .credential |
+      select(type == "object" and .proof.cryptosuite == "eddsa-jcs-2022")
+    ' <<<"$body")
+    [[ -n $document ]] || { printf '%s\n' 'GET did not provide the embedded secured document' >&2; return 1; }
+    result=$(printf '%s' "$document" | curl --fail --silent --show-error --max-time 15 --request POST --header 'Content-Type: application/vc' --data-binary @- "$credentials/v1/credential-verifications")
+  fi
+  jq -e --arg status "$status" --arg mechanism "$mechanism" '.status == $status and .mechanism == $mechanism and .schemaValidation.status == "Success"' <<<"$result" >/dev/null
   if [[ ${show_vectors:-false} == true ]]; then
-    jq '{credentialId, credential: {id: .credential.id, type: .credential.type, proof: .credential.proof, credentialSubject: .credential.credentialSubject}, canton: {anchorers: .canton.anchorers, holders: .canton.holders}, verification}' <<<"$body"
+    jq '{credentialId, credential: {id: .credential.id, type: .credential.type, proof: .credential.proof, credentialSubject: .credential.credentialSubject}, canton: {anchorers: .canton.anchorers, holders: .canton.holders}}' <<<"$body"
+    jq '{mechanism, status, verifiedAt, controller, errors, warnings, schemaValidation}' <<<"$result"
   fi
 }
 pause() { read -r -p "Press Enter for $1..." _; }
@@ -74,15 +84,15 @@ check_credential "$external_did" VERIFIED application/vc+jwt
 check_credential "$holderless" VERIFIED eddsa-jcs-2022 85
 check_credential "$tampered" FAILED eddsa-jcs-2022 86
 registered=$(fetch "$credentials/v1/registered-credentials/$tampered")
-jq -e '.verification.status == "FAILED" and .verification.schemaValidation.status == "Success" and (.registration.registryAdmin | type == "string")' <<<"$registered" >/dev/null
+jq -e '(has("verification") | not) and (has("schemaValidation") | not) and (.registration.registryAdmin | type == "string")' <<<"$registered" >/dev/null
 dso=$(fetch "$did/v1/dids/dso")
 dso_id=$(jq -er '.did' <<<"$dso")
 jq -e --arg id "$dso_id" '.did == $id and .didDocument.id == $id and .didDocument.alsoKnownAs == ["urn:fqpn:localnet:demo:dso.canton"] and any(.didDocument.service[]; .id == ($id + "#name-resolution") and .type == "CantonDemoNameResolutionService")' <<<"$dso" >/dev/null
 bft_url="$bft/v1/bft/credentials/$party_id"
 healthy=$(fetch "$bft_url")
-jq -e '.quorum.agreement == "4-of-4" and .result.credentialId == "urn:demo:credential:000"' <<<"$healthy" >/dev/null
+jq -e '.quorum.agreement == "4-of-4" and .result.credentialId == "urn:demo:credential:000" and (.result | has("verification") | not)' <<<"$healthy" >/dev/null
 if [[ $mode == --check ]]; then
-  printf '%s\n' 'Demo offline check passed: ready APIs, seeded statuses, DSO discovery and healthy BFT. No service stopped.'
+  printf '%s\n' 'Demo live read-only check passed: ready APIs, standalone proof statuses, DSO discovery and healthy BFT. No service stopped.'
   exit 0
 fi
 pause 'Party authorization'

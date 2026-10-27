@@ -7,14 +7,19 @@ public record RegisteredCredentialResponse(
     String credentialId,
     String lifecycleState,
     JsonNode credential,
-    VerificationResponse verification,
     RegistrationResponse registration,
     JsonNode canton,
-    io.unlockit.domain.credential.model.CredentialLifecycle lifecycle) {
+    io.unlockit.domain.credential.model.CredentialLifecycle lifecycle,
+    @com.fasterxml.jackson.annotation.JsonIgnore String securedSource,
+    @com.fasterxml.jackson.annotation.JsonIgnore String securedMediaType) {
+  public RegisteredCredentialResponse(String contractId, String credentialId, String lifecycleState,
+      JsonNode credential, RegistrationResponse registration, JsonNode canton,
+      io.unlockit.domain.credential.model.CredentialLifecycle lifecycle) {
+    this(contractId, credentialId, lifecycleState, credential, registration, canton, lifecycle, null, null);
+  }
   public RegisteredCredentialResponse(String contractId, String credentialId, String lifecycleState,
       CredentialProjection credential, RegistrationResponse registration) {
     this(contractId, credentialId, lifecycleState, new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(credential),
-        new VerificationResponse("unsecured", "INDETERMINATE", null, java.util.List.of(),
-            java.util.List.of("No securing mechanism"), new VerificationResponse.SchemaValidation("Indeterminate", java.util.List.of("No local schema evaluation"))), registration, null, null);
+        registration, null, null);
   }
 }

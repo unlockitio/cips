@@ -49,11 +49,13 @@ class CredentialResourceTest {
         .body("credential.id", equalTo("credential"))
         .body("credential['@context'][0]", equalTo("https://www.w3.org/ns/credentials/v2"))
         .body("credential.type[0]", equalTo("VerifiableCredential"))
-        .body("credential.issuer", equalTo("issuer"))
-        .body("registration", org.hamcrest.Matchers.nullValue());
+         .body("credential.issuer", equalTo("issuer"))
+         .body("registration", org.hamcrest.Matchers.nullValue())
+         .body("verification", org.hamcrest.Matchers.nullValue());
     given().queryParam("page", "0").queryParam("pageSize", "50").get("/v1/credentials").then()
         .statusCode(200).body("items", hasSize(1)).body("page", equalTo(0))
-        .body("items[0].credential.type[0]", equalTo("VerifiableCredential"));
+         .body("items[0].credential.type[0]", equalTo("VerifiableCredential"))
+         .body("items[0].verification", org.hamcrest.Matchers.nullValue());
   }
 
   @Test
@@ -65,11 +67,13 @@ class CredentialResourceTest {
     given().get("/v1/registered-credentials/credential").then().statusCode(200)
         .body("credential.id", equalTo("credential"))
         .body("credential.type[0]", equalTo("VerifiableCredential"))
-        .body("registration.registryAdmin", equalTo("admin"));
+         .body("registration.registryAdmin", equalTo("admin"))
+         .body("verification", org.hamcrest.Matchers.nullValue());
     given().queryParam("page", "0").queryParam("pageSize", "50")
         .get("/v1/registered-credentials").then().statusCode(200).body("items", hasSize(1))
         .body("items[0].credential.type[0]", equalTo("VerifiableCredential"))
-        .body("items[0].registration.registryAdmin", equalTo("admin"));
+         .body("items[0].registration.registryAdmin", equalTo("admin"))
+         .body("items[0].verification", org.hamcrest.Matchers.nullValue());
   }
 
   @Test
@@ -165,6 +169,59 @@ class CredentialResourceTest {
     }
     org.mockito.Mockito.verify(manager).list(null, null, null, filters);
     org.mockito.Mockito.verify(manager).listRegistered(null, null, null, filters);
+  }
+
+  @Test
+  void evaluatesSingularReadsAndRejectsCollectionVerification() {
+    var unsigned = new CredentialResponse("contract", "credential", "archived", credential.credential(), null, null);
+    var bad = new CredentialResponse("bad-contract", "bad", "archived", credential.credential(), null, null,
+        "broken.jwt", "application/vc+jwt");
+    var unsupported = new RegisteredCredentialResponse("contract", "credential", "archived",
+        registered.credential(), registered.registration(), null, null, "opaque", "application/vc+cose");
+    when(manager.get("credential", "archived")).thenReturn(unsigned);
+    when(manager.get("bad", "archived")).thenReturn(bad);
+    when(manager.getRegistered("credential", "archived")).thenReturn(unsupported);
+    var filters = new io.unlockit.domain.credential.query.CredentialFilters("archived", null, null, null, null,
+        null, null, null, null, null);
+    when(manager.list("1", "2", "token", filters)).thenReturn(
+        new CredentialPageResponse(List.of(unsigned, bad), 1, 2, true, "123", "next"));
+    when(manager.listRegistered("1", "2", "token", filters)).thenReturn(
+        new RegisteredCredentialPageResponse(List.of(unsupported), 1, 2, false, "123", null));
+
+    for (String route : List.of("credentials", "registered-credentials")) {
+      String single = "/v1/" + route + "/credential";
+      for (String suffix : List.of("", "?verify=false")) {
+        given().queryParam("state", "archived").get(single + suffix).then().statusCode(200)
+            .header("Cache-Control", org.hamcrest.Matchers.not(equalTo("no-store")))
+            .body("credentialId", equalTo("credential"))
+            .body("record", org.hamcrest.Matchers.nullValue());
+      }
+      given().queryParam("state", "archived").queryParam("verify", true).get(single).then()
+          .statusCode(200).header("Cache-Control", org.hamcrest.Matchers.containsString("no-store"))
+          .body("record.lifecycleState", equalTo("archived"))
+          .body("evaluation.status", equalTo("INDETERMINATE"))
+          .body("evaluation.schemaValidation.status", equalTo("Indeterminate"));
+      String page = "/v1/" + route;
+      for (String suffix : List.of("", "?verify=false")) {
+        given().queryParam("state", "archived").queryParam("page", "1")
+            .queryParam("pageSize", "2").queryParam("nextPageToken", "token")
+            .get(page + suffix).then().statusCode(200)
+            .body("page", equalTo(1)).body("pageSize", equalTo(2))
+            .body("snapshotOffset", equalTo("123"))
+            .body("items[0].credentialId", equalTo("credential"))
+            .body("items[0].record", org.hamcrest.Matchers.nullValue());
+      }
+      given().queryParam("verify", true).get(page).then().statusCode(400)
+          .body("error", equalTo("verify=true is unsupported on collection reads"));
+    }
+    given().queryParam("state", "archived").queryParam("verify", true)
+        .get("/v1/credentials/bad").then().statusCode(200)
+        .body("record.credentialId", equalTo("bad"))
+        .body("evaluation.status", equalTo("FAILED"));
+    org.mockito.Mockito.verify(manager, org.mockito.Mockito.never()).list(null, null, null,
+        new io.unlockit.domain.credential.query.CredentialFilters(null, null, null, null, null, null, null, null, null, null));
+    org.mockito.Mockito.verify(manager, org.mockito.Mockito.never()).listRegistered(null, null, null,
+        new io.unlockit.domain.credential.query.CredentialFilters(null, null, null, null, null, null, null, null, null, null));
   }
 
   @Test
