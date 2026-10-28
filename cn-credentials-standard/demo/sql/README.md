@@ -19,21 +19,21 @@ For this demo the narrow exact-ID index is:
 ```sql
 CALL create_index_for_contract(
   'credential_id_idx',
-  'canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential',
+  'canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:Credential',
   '(payload ->> ''id'')',
   'btree',
   'text_ops'
 );
 ```
 
-The expression and unprefixed qualified name are validated against the 3.5.8 container and a live interface payload. The registry collection first pages distinct `registryAdmin` values from `active('canton-network-credentials-interfaces:Canton.Network.Credentials.V1:CredentialRegistryFactory')`, ordered by the canonical Party string, and then reads every matching factory ordered by `contract_id`. This keeps all factories for one logical registry together and never uses a factory contract ID as registry identity. The API combines the active `Credential` and `RegisteredCredential` projections by contract ID: the former carries intrinsic credential fields, while the latter carries registration metadata. `RegisteredCredential` requires `Credential`; a registered result is valid only when both projections identify the same canonical contract. Registered intrinsic renewal and registration-only extension each replace the canonical contract atomically, producing both projections under one successor contract ID; each changes only its own lifecycle field. Inspect the documented reader surface directly with:
+The expression and unprefixed qualified name were validated against the 3.5.8 container and an earlier interface payload; the renamed package identifier still needs live PQS verification. The registry collection first pages distinct `registryAdmin` values from `active('canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:CredentialRegistryFactory')`, ordered by the canonical Party string, and then reads every matching factory ordered by `contract_id`. This keeps all factories for one logical registry together and never uses a factory contract ID as registry identity. The API combines the active `Credential` and `RegisteredCredential` projections by contract ID: the former carries intrinsic credential fields, while the latter carries registration metadata. `RegisteredCredential` requires `Credential`; a registered result is valid only when both projections identify the same canonical contract. Registered intrinsic renewal and registration-only extension each replace the canonical contract atomically, producing both projections under one successor contract ID; each changes only its own lifecycle field. Inspect the documented reader surface directly with:
 
 ```sql
 SELECT c.contract_id,
        c.payload AS credential_payload,
        r.payload AS registration_payload
-FROM active('canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential') c
-JOIN active('canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential') r
+FROM active('canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:Credential') c
+JOIN active('canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:RegisteredCredential') r
   USING (contract_id)
 LIMIT 1;
 ```

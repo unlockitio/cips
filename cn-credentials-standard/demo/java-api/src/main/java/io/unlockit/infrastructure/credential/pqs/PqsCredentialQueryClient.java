@@ -22,11 +22,11 @@ import java.util.List;
 @ApplicationScoped
 public class PqsCredentialQueryClient implements CredentialQueryClient {
   static final String CREDENTIAL_INTERFACE =
-      "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential";
+      "canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:Credential";
   static final String REGISTERED_CREDENTIAL_INTERFACE =
-      "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential";
+      "canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:RegisteredCredential";
   static final String CREDENTIAL_REGISTRY_FACTORY_INTERFACE =
-      "canton-network-credentials-interfaces:Canton.Network.Credentials.V1:CredentialRegistryFactory";
+      "canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:CredentialRegistryFactory";
   static final String FIND_CREDENTIAL_BY_ID_SQL = """
       select c.contract_id, c.payload as credential_payload
         from active(?) c

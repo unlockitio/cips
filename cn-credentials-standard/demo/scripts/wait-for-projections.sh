@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:Credential'
-REGISTERED_CREDENTIAL_INTERFACE='canton-network-credentials-interfaces:Canton.Network.Credentials.V1:RegisteredCredential'
+CREDENTIAL_INTERFACE='canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:Credential'
+REGISTERED_CREDENTIAL_INTERFACE='canton-network-credentials-interfaces-v2:Canton.Network.Credentials.V1:RegisteredCredential'
 # 360 deterministic records plus eight seeded CIP scenarios and two name credentials.
 # The separate Holding template is not projected as a Credential interface.
 CREDENTIAL_EXPECTED=${CREDENTIAL_SEED_COUNT:-370}
