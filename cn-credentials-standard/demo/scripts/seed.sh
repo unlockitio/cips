@@ -4,7 +4,7 @@ set -eu
 LEDGER_HOST=${LEDGER_HOST:-credential-canton}
 LEDGER_PORT=${LEDGER_PORT:-6865}
 JSON_API_URL=${JSON_API_URL:-http://credential-canton:7575}
-SCRIPTS_DAR=/artifacts/canton-network-credentials-demo-scripts-0.1.0.dar
+SCRIPTS_DAR=/artifacts/canton-network-credentials-demo-scripts-0.2.0.dar
 PARTY_FILE=/tmp/credential-parties.json
 
 [ -f "$SCRIPTS_DAR" ] || {

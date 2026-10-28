@@ -8,9 +8,9 @@ The Canton Open Source 3.5.11 container is a minimal local Canton synchronizer: 
 
 The `interface`, `model`, and `test` packages use DPM/Daml SDK 3.5.11 and Daml-LF 2.2. The artifact image contains exactly:
 
-- `canton-network-credentials-interfaces-0.2.0.dar`
-- `canton-network-credentials-demo-0.1.0.dar`
-- `canton-network-credentials-demo-scripts-0.1.0.dar`
+- `canton-network-credentials-interfaces-0.3.0.dar`
+- `canton-network-credentials-demo-0.2.0.dar`
+- `canton-network-credentials-demo-scripts-0.2.0.dar`
 
 Only the interface and model DARs are uploaded. `credential-seed` runs `Seed:main` on a fresh ledger or `Seed:resume` for existing parties from the test DAR. Both call positive fixture builders imported from the CIP #169, #204, #209 and #249 demo test modules: the seed creates 360 deterministic credentials, two registry-issued name credentials, eight scenario credentials and one name holding. The two textual-issuer, holderless examples use a distinct DemoAnchorer Party and deterministic, test-only secured vectors from `fixtures/generate.py` (`python3 fixtures/generate.py --check` verifies byte-identical regeneration); the expired-registration example retains intrinsic validity in the future and a registration expiry in the past. Other textual test examples still use explicitly non-verifiable structural placeholders. The fixed derivation label for the test Ed25519 key is public, not a production secret or trust anchor. The seeded `external-tampered` document uses its own ID and a proof signed over score 85 for that ID, then changes only the score to 86; its typed projection matches score 86, so offline verification fails on the signature rather than a projection mismatch. The older unseeded `external-holderless-tampered.json` remains for the Java regression test. Negative test scripts (including duplicate-name and archival cases) run only on isolated test ledgers, never as part of the shared Canton seed. The seeded imported-name example is explicitly unverified demo data. These are demo assertions, not external verification or CIP conformance. The PQS image is pinned to 3.5.8, which provides both the credential reader contract and the DID historical reader signatures. One pipeline projects the participant into one PostgreSQL database that both products read. The DID interface/model DARs are uploaded to this same participant after the Credentials DARs. The Credentials seed runs first; the DID seed allocates or recovers DSO on that participant and reads the already allocated DemoHolderA Party from that participant for its self-claimed Alice alias. It refuses missing parties and will not replace unexpected aliases on rerun. DID assertions are self-claims, not cryptographic verification or name authority.
 
@@ -46,7 +46,7 @@ make down
 
 Compose orders both DAR uploads, the Credentials seed and then the DID seed, starts the one PQS pipeline from the oldest available offset on an empty datastore, or resumes its stored checkpoint, and waits for both products' projection checks against that one database. `make up` starts this dependency graph; `make smoke-test` checks the consumer journey against the already running stack.
 
-Other useful targets are `make daml-build`, `make daml-test`, `make java-test`, `make seed`, `make projection-check`, `make ps`, and the domain-specific log targets.
+Other useful targets are `make daml-build`, `make daml-test`, `make java-test`, `make seed`, `make projection-check`, `make ps`, and the domain-specific log targets. The candidate Daml scripts cover both request-backed offers and issuer-initiated `request = None` offers: the holder Accepts the signed offer before any credential is issued, while holder-initiated type-only requests may instead be approved directly by their targeted issuer without a second Accept. These are ledger demo paths, not wallet or HTTP mutation endpoints.
 
 ## Draft Party-profile coverage
 
