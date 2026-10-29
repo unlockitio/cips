@@ -107,6 +107,10 @@ data RegisteredDidDocumentMetadataUpdate = RegisteredDidDocumentMetadataUpdate w
   registration : DidRegistrationMetadata
  deriving (Eq, Show)
 
+data DidRegistryFactory_CreateResult = DidRegistryFactory_CreateResult with
+  registeredDidDocument : ContractId RegisteredDidDocument
+ deriving (Eq, Show)
+
 data DidRegistryFactory_UpdateRegisteredDidDocumentsResult = DidRegistryFactory_UpdateRegisteredDidDocumentsResult with
   registeredDidDocuments : [ContractId RegisteredDidDocument]
  deriving (Eq, Show)
@@ -114,7 +118,28 @@ data DidRegistryFactory_UpdateRegisteredDidDocumentsResult = DidRegistryFactory_
 interface DidRegistryFactory where
   viewtype DidRegistryFactoryView
 
+  didRegistryFactory_createImpl : ContractId DidRegistryFactory -> DidRegistryFactory_Create -> Update DidRegistryFactory_CreateResult
+
   didRegistryFactory_updateRegisteredDidDocumentsImpl : ContractId DidRegistryFactory -> DidRegistryFactory_UpdateRegisteredDidDocuments -> Update DidRegistryFactory_UpdateRegisteredDidDocumentsResult
+
+  -- The owner is the sole controller, so registration is requested by the DID
+  -- subject itself and not granted by the registry administrator on its behalf.
+  -- The exercise still runs under the factory signatories' authority, which is
+  -- what lets the implementation bind registry policy to the created record.
+  -- Reaching a factory it cannot see requires explicit disclosure, so the owner
+  -- names the registry it believes it is joining rather than trusting the
+  -- disclosed contract. Registration metadata is set by the implementation from
+  -- registry policy and is deliberately not an argument: an owner that could
+  -- choose it could misattribute registry authority to an administrator.
+  nonconsuming choice DidRegistryFactory_Create : DidRegistryFactory_CreateResult
+    with
+      owner : Party
+      expectedRegistryAdmin : Party
+      document : DidDocumentView
+    controller owner
+    do
+      assertMsg "unexpected registry administrator" (expectedRegistryAdmin == (view this).registryAdmin)
+      didRegistryFactory_createImpl this self arg
 
   choice DidRegistryFactory_UpdateRegisteredDidDocuments : DidRegistryFactory_UpdateRegisteredDidDocumentsResult
     with

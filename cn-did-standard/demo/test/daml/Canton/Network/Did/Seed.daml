@@ -1,7 +1,7 @@
 module Canton.Network.Did.Seed where
 
 import Canton.Network.Did.Demo
-import Canton.Network.Did.V1 (Did(..))
+import Canton.Network.Did.V1
 import Daml.Script
 
 -- The seeded alias is a self-claim by the DSO document about its own Party. It
@@ -79,12 +79,28 @@ ensureDocumentWithServices owner didText label advertiseNames = do
         (length document.document.services == (if advertiseNames then 8 else 6))
       pure [cid]
     [] -> do
-      now <- getTime
+      -- The seed goes through the registry factory rather than creating the
+      -- document directly. The demo registry it stands up is administered by
+      -- the DSO Party itself, so the seeded record stays self-administered and
+      -- the API's owner/registryAdmin invariant is unchanged. A deployment with
+      -- a distinct administrator would disclose that administrator's factory
+      -- instead; the create path is identical.
+      existingFactories <- queryFilter @DemoDidRegistryFactory owner (\factory -> factory.admin == owner)
+      factoryCid <- case existingFactories of
+        ((cid, _) :: _) -> pure cid
+        [] -> submit owner do createCmd DemoDidRegistryFactory with admin = owner
+      let base = documentView didText label
+      let services = if advertiseNames then base.services else take 6 base.services
+      created <- submit owner do
+        exerciseCmd (toInterfaceContractId @DidRegistryFactory factoryCid) DidRegistryFactory_Create with
+          owner
+          expectedRegistryAdmin = owner
+          document = base with services
+      -- The factory sets registration metadata from registry policy and leaves
+      -- aliases empty, so the owner claims the seed alias itself afterwards.
+      let documentCid = fromInterfaceContractId @DemoDidDocument created.registeredDidDocument
       cid <- submit owner do
-        let base = demoDocument owner didText label now
-        let services = if advertiseNames then base.document.services else take 6 base.document.services
-        createCmd (base with
-          document = base.document with services
-          aliases = [demoNameAlias seedNetwork seedAliasName owner])
+        exerciseCmd documentCid DemoDidDocument_AssertAliases with
+          assertedAliases = [demoNameAlias seedNetwork seedAliasName owner]
       pure [cid]
     _ -> abort ("Duplicate DID document: " <> didText)

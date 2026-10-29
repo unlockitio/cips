@@ -113,3 +113,138 @@ main = script do
   seededAlias <- queryContractId dso (head fresh)
   assertMsg "the seed claims the DSO alias for its own Party only"
     (fmap (.aliases) seededAlias == Some [demoNameAlias "localnet" "dso.canton" dso])
+
+-- The registry factory path. The administrator is a distinct Party here, which
+-- is the case the seed cannot exercise because its demo registry is
+-- self-administered.
+testRegistryFactory : Script ()
+testRegistryFactory = script do
+  admin <- allocateParty "DidTestRegistryAdmin"
+  owner <- allocateParty "DidTestFactoryOwner"
+  intruder <- allocateParty "DidTestIntruder"
+  factoryCid <- submit admin do createCmd DemoDidRegistryFactory with admin
+  let factory = toInterfaceContractId @DidRegistryFactory factoryCid
+  let ownerDid = Did ("did:canton:" <> partyToText owner)
+  let ownerDocument = documentView ownerDid.value "owner"
+
+  -- The owner is not a stakeholder on the factory, so it cannot use it without
+  -- the administrator disclosing the contract.
+  submitMustFail owner do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = ownerDocument
+
+  Some factoryDisclosure <- queryDisclosure admin factoryCid
+  created <- submit (actAs owner <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = ownerDocument
+  let documentCid = fromInterfaceContractId @DemoDidDocument created.registeredDidDocument
+  Some record <- queryContractId owner documentCid
+  assertMsg "the created record is owned by the DID subject"
+    (record.owner == owner && record.document == ownerDocument)
+  assertMsg "registration is attributed to the factory administrator, not chosen by the owner"
+    (record.registration.registryAdmin == admin)
+  assertMsg "registration time and version come from registry policy"
+    (record.registration.registeredAt == record.registration.updatedAt
+      && record.registration.versionId == "demo-version-1"
+      && not record.registration.deactivated)
+  assertMsg "the factory does not claim aliases on the owner's behalf" (record.aliases == [])
+  assertMsg "the DID subject is the sole controller"
+    (record.document.controllers == NonEmpty ownerDid [])
+
+  -- Both the owner and the administrator see the record, and the administrator
+  -- is a co-signatory, which is what makes the attribution above verifiable.
+  adminView <- queryContractId admin documentCid
+  assertMsg "the registry administrator is a stakeholder on what it co-signed"
+    (fmap (.owner) adminView == Some owner)
+  registeredView <- submit owner do
+    exerciseCmd created.registeredDidDocument RegisteredDidDocument_PublicFetch with
+      expectedRegistryAdmin = admin
+      actor = owner
+  assertMsg "the registered view reports the factory administrator"
+    (registeredView.registration.registryAdmin == admin
+      && registeredView.document.id == ownerDid)
+
+  -- Content authority stays with the owner alone. The administrator co-signed
+  -- the record but cannot rewrite the document or its aliases.
+  let claim = demoNameAlias "localnet" "owner.canton" owner
+  aliasCid <- submit owner do
+    exerciseCmd documentCid DemoDidDocument_AssertAliases with assertedAliases = [claim]
+  Some claimed <- queryContractId owner aliasCid
+  assertMsg "the owner edits its own document content and keeps the registration"
+    (claimed.aliases == [claim] && claimed.registration.registryAdmin == admin
+      && claimed.document == ownerDocument && claimed.owner == owner)
+  submitMustFail admin do
+    exerciseCmd aliasCid DemoDidDocument_AssertAliases with assertedAliases = []
+  submitMustFail intruder do
+    exerciseCmd aliasCid DemoDidDocument_AssertAliases with assertedAliases = []
+
+  -- Rejected creations.
+  submitMustFail (actAs owner <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = documentView ("did:canton:" <> partyToText intruder) "intruder"
+  submitMustFail (actAs owner <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = ownerDocument with
+        controllers = NonEmpty ownerDid [Did ("did:canton:" <> partyToText intruder)]
+  submitMustFail (actAs owner <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = owner
+      document = ownerDocument
+  -- The owner is the controller, so nobody can register a DID for someone else.
+  submitMustFail (actAs intruder <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = ownerDocument
+
+  -- The ledger enforces no global DID uniqueness, so an owner can register the
+  -- same DID again. Recording this keeps the demo honest about what the factory
+  -- does not provide.
+  repeated <- submit (actAs owner <> disclose factoryDisclosure) do
+    exerciseCmd factory DidRegistryFactory_Create with
+      owner
+      expectedRegistryAdmin = admin
+      document = ownerDocument
+  assertMsg "repeat registration is possible, so the factory is not an allocation authority"
+    (repeated.registeredDidDocument /= created.registeredDidDocument)
+  duplicates <- queryFilter @DemoDidDocument owner (\contract -> contract.document.id == ownerDid)
+  assertMsg "both registrations stay active and are distinguishable only by contract ID"
+    (length duplicates == 2)
+
+  -- Direct creation cannot forge the administrator's attribution: the owner
+  -- alone has no authority to name a third-party registry administrator.
+  now <- getTime
+  submitMustFail owner do
+    createCmd DemoDidDocument with
+      owner
+      document = ownerDocument
+      registration = registrationView admin now
+      aliases = []
+  -- Self-administered direct creation remains possible and attributes nothing
+  -- to the registry, which is how the pre-factory demo documents read.
+  selfCid <- submit owner do
+    createCmd DemoDidDocument with
+      owner
+      document = ownerDocument
+      registration = registrationView owner now
+      aliases = []
+  Some selfRecord <- queryContractId owner selfCid
+  assertMsg "a self-created record names only its own owner as registry administrator"
+    (selfRecord.registration.registryAdmin == owner)
+  assertMsg "so a third-party registryAdmin is evidence of factory-mediated creation"
+    (selfRecord.registration.registryAdmin /= admin)
+
+  -- The batch metadata update is deliberately unimplemented in this slice.
+  submitMustFail (actAs admin) do
+    exerciseCmd factory DidRegistryFactory_UpdateRegisteredDidDocuments with
+      actor = admin
+      updates = []

@@ -15,7 +15,16 @@ data DemoNameAlias = DemoNameAlias with
   deriving (Eq, Show)
 
 -- This stakeholder model is deliberately local to the non-normative demo.
--- The document owner signs; registryAdmin is only the demo Party association and observer.
+-- The document owner signs, so only the owner can change document content. The
+-- registry administrator co-signs, which is what makes factory-mediated
+-- registration verifiable: a record naming a third-party registryAdmin could
+-- not have been created without that administrator's authority. Co-signing does
+-- not grant content authority, because every content choice below is controlled
+-- by the owner alone and supplies the administrator's authority through the
+-- exercise. The administrator does retain the inherent co-signatory power to
+-- archive the record; it can withdraw a registration but never rewrite it.
+-- When registryAdmin equals owner the record is self-administered and attributes
+-- nothing to a third party, which is the pre-factory demo behaviour.
 template DemoDidDocument
   with
     owner : Party
@@ -23,8 +32,7 @@ template DemoDidDocument
     registration : DidRegistrationMetadata
     aliases : [DemoNameAlias]
   where
-    signatory owner
-    observer registration.registryAdmin
+    signatory owner, registration.registryAdmin
 
     interface instance DidDocument for DemoDidDocument where
       view = document
@@ -43,6 +51,45 @@ template DemoDidDocument
         assertedAliases : [DemoNameAlias]
       controller owner
       do create this with aliases = assertedAliases
+
+-- The demo registry. The administrator is the only signatory and no owner is an
+-- observer, so an owner must receive the contract through explicit disclosure
+-- before it can exercise the factory. Nothing here allocates DIDs: the ledger
+-- enforces no global uniqueness, so repeated creation for the same owner stays
+-- possible by construction. Making it impossible would need a separate
+-- per-owner consumable allocation contract, which this demo slice does not add.
+template DemoDidRegistryFactory
+  with
+    admin : Party
+  where
+    signatory admin
+
+    interface instance DidRegistryFactory for DemoDidRegistryFactory where
+      view = DidRegistryFactoryView with registryAdmin = admin
+
+      -- Authority here is the factory signatory plus the controlling owner, so
+      -- the created record can name the administrator without the owner ever
+      -- holding the administrator's authority on its own.
+      didRegistryFactory_createImpl _ arg = do
+        let expected = Did ("did:canton:" <> partyToText arg.owner)
+        assertMsg "demo registry requires the owner's own provisional did:canton identifier"
+          (arg.document.id == expected)
+        assertMsg "demo registry requires the DID subject as its sole controller"
+          (arg.document.controllers == NonEmpty expected [])
+        now <- getTime
+        documentCid <- create DemoDidDocument with
+          owner = arg.owner
+          document = arg.document
+          registration = registrationView admin now
+          aliases = []
+        pure DidRegistryFactory_CreateResult with
+          registeredDidDocument = toInterfaceContractId documentCid
+
+      -- Out of scope for this demo slice. Failing explicitly is honest: a
+      -- permissive stub would imply registry metadata authority that has no
+      -- validation behind it.
+      didRegistryFactory_updateRegisteredDidDocumentsImpl _ _ =
+        abort "demo registry does not implement batch registration-metadata updates"
 
 demoDocument : Party -> Text -> Text -> Time -> DemoDidDocument
 demoDocument owner didText label now = DemoDidDocument with

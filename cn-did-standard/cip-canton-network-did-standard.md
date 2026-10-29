@@ -223,6 +223,19 @@ The choice checks that the result names `expectedRegistryAdmin`. It verifies a k
 
 `DidRegistryFactory` exposes `DidRegistryFactory_UpdateRegisteredDidDocuments`, a batch update of registration metadata for known `RegisteredDidDocument` contract IDs. Concrete implementations must authorize the actor, verify registry ownership, preserve intrinsic DID Document content unless a separately authorized lifecycle transition changes it, and reject inconsistent version, deactivation, time, source, integrity, finality, or authority metadata. Factory metadata updates are registry operations, not DID-controller authority.
 
+`DidRegistryFactory` also exposes `DidRegistryFactory_Create`, a nonconsuming registration-creation choice:
+
+```daml
+  nonconsuming choice DidRegistryFactory_Create : DidRegistryFactory_CreateResult
+    with
+      owner : Party
+      expectedRegistryAdmin : Party
+      document : DidDocumentView
+    controller owner
+```
+
+The `owner` Party is the sole controller, so the DID subject requests its own registration rather than receiving it from a registry administrator acting on its behalf. The choice checks `expectedRegistryAdmin` against the factory view, so the owner names the registry it believes it is joining instead of trusting a disclosed contract. Registration metadata is not an argument: an owner able to choose it could misattribute registry authority to an administrator, so the implementation sets it from registry policy. The exercise combines the factory signatories' authority with the owner's, which is what permits a created record to carry registry attribution. Concrete implementations must validate the identifier and controller set against the owner, define method-specific validation, and decide factory reachability and disclosure. The interface defines no DID uniqueness or allocation semantics, so repeated creation is not prevented, and creation through a factory is not evidence of DID control, external publication, freshness, or finality.
+
 ##### HTTP Interfaces
 
 The HTTP surface is a resolver and discovery boundary over registry-enabled documents. Authority remains method-specific rather than network-wide by virtue of a single registry; ledger visibility retains its deployment scope, and clients still perform method-specific verification.
@@ -362,6 +375,8 @@ No migration from an existing discovery mechanism is defined by this draft. Coex
 The checked-in [`demo/interface/`](demo/interface/) package is candidate Daml interface source only. It is not a conforming registry, resolver, registrar, deployment discovery service, or deployed service. No conforming reference implementation exists for this Early Draft.
 
 The checked-in non-normative [`demo/`](demo/) is an executable local Canton/PQS vertical slice for the four candidate read operations: intrinsic `GET /v1/dids` and `GET /v1/dids/{did}`, plus registered `GET /v1/registered-dids` and `GET /v1/registered-dids/{did}`. A concrete demo Daml template creates Alice and Bob contracts on a local ledger. The Java 21 Quarkus 3.23.2 API reads active `DidDocument` projections directly for intrinsic resources and joins active `DidDocument` and `RegisteredDidDocument` projections by identical contract ID for registered resources. Its concrete template, signatory and visibility model, use of `registration.registryAdmin` as a demo Party association, fixture values, storage choice, collection envelope, status codes, and error body are architectural demonstration choices. They add no normative requirements and claim no deployed service, authoritative Party association, DID control, integrity, freshness, finality, or production cryptography. See the demo README for the exact operator workflow and boundaries.
+
+The demo also implements `DidRegistryFactory_Create` on a `DemoDidRegistryFactory` template signed only by the registry administrator, with no owner observers, so an owner must receive the factory through explicit disclosure. The choice asserts that the document identifier is exactly `did:canton:` followed by the owner's full Party ID, that the subject's DID is the sole controller, and that the owner's `expectedRegistryAdmin` matches the factory, then creates the demo document with the owner as a signatory and registration metadata set from factory policy. The created record is co-signed by the administrator, which is what makes administrator attribution verifiable: an owner acting alone cannot create a record naming a third-party `registryAdmin`, so only factory-created documents carry a valid third-party registration. Direct owner-only creation therefore remains possible but is necessarily self-administered, where `registryAdmin` equals the owner and attributes nothing to a registry. The trade-off is that the co-signing administrator also holds the inherent co-signatory power to archive a record; it can withdraw a registration but never rewrite one, because every content choice is controlled by the owner alone. A single contract is retained rather than a separate registration record because the registered HTTP family composes the two interface views by identical contract ID. Registration is created through the registry factory, and the factory signature does not imply per-record review of document content. The demo enforces no DID uniqueness: an owner can repeat creation and obtain a second active document for the same DID, so the factory is not an allocation authority. A future per-owner consumable allocation contract would be needed to change that.
 
 Conformance and maturity need to distinguish three categories:
 
