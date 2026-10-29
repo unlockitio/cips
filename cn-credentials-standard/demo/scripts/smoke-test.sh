@@ -47,6 +47,9 @@ registry_id=$(printf '%s' "$registries" | jq -r '.items[0].registryId')
 registry=$(curl --fail --silent "$BASE/v1/credential-registries/$registry_id")
 printf '%s' "$registry" | jq -e --arg registry_id "$registry_id" '
   .registryId == $registry_id and
+  .credentials.credentialTypeAggregation.supported == true and
+  .credentials.credentialTypeAggregation.credentialCount == false and
+  (([.credentials.credentialTypeAggregation.supportedFilters[]] | sort) == ["issuer", "registryAdmin", "state"]) and
   ([.issuanceFactories[] | .contractId] ==
    ([.issuanceFactories[] | .contractId] | sort))
 ' >/dev/null
@@ -67,6 +70,39 @@ printf '%s' "$intrinsic" | jq -e '
     (.canton.anchorers[0] | type == "string") and
    (has("verification") | not) and (has("schemaValidation") | not) and
    (has("registration") | not)
+' >/dev/null
+
+issuer=$(printf '%s' "$intrinsic" | jq -er '.credential.issuer')
+types=$(curl --fail --silent "$BASE/v1/credential-types")
+printf '%s' "$types" | jq -e '
+  .page == 0 and .pageSize == 50 and (.hasNext | type == "boolean") and
+  (.items | type == "array") and
+  ([.items[] | [.issuer, .credentialType]] == ([.items[] | [.issuer, .credentialType]] | sort)) and
+  (all(.items[]; (.issuer | type == "string") and (.credentialType | type == "string") and
+    (.firstObservedAt | type == "string") and (.lastObservedAt | type == "string") and
+    (has("credentialCount") | not))) and
+  (has("credentialCount") | not) and (has("snapshotOffset") | not) and
+  (has("nextPageToken") | not)
+' >/dev/null
+filtered_types=$(curl --fail --silent --get "$BASE/v1/credential-types" --data-urlencode "issuer=$issuer")
+printf '%s' "$filtered_types" | jq -e --arg issuer "$issuer" --argjson expected "$(printf '%s' "$intrinsic" | jq -c '.credential.type')" '
+  . as $page |
+  .page == 0 and .pageSize == 50 and (.hasNext | type == "boolean") and
+  (.items | type == "array") and
+  (all(.items[]; .issuer == $issuer and (has("credentialCount") | not))) and
+  (all($expected[]; . as $type | any($page.items[]; .issuer == $issuer and .credentialType == $type)))
+' >/dev/null
+first_type_page=$(curl --fail --silent --get "$BASE/v1/credential-types" --data-urlencode "issuer=$issuer" --data-urlencode 'page=0' --data-urlencode 'pageSize=1')
+second_type_page=$(curl --fail --silent --get "$BASE/v1/credential-types" --data-urlencode "issuer=$issuer" --data-urlencode 'page=1' --data-urlencode 'pageSize=1')
+printf '%s' "$first_type_page" | jq -e --arg issuer "$issuer" '
+  .page == 0 and .pageSize == 1 and .hasNext == true and
+  (.items | length == 1) and .items[0].issuer == $issuer and
+  (.items[0] | has("credentialCount") | not)
+' >/dev/null
+printf '%s' "$second_type_page" | jq -e --arg issuer "$issuer" --arg first "$(printf '%s' "$first_type_page" | jq -r '.items[0].credentialType')" '
+  .page == 1 and .pageSize == 1 and (.hasNext | type == "boolean") and
+  (.items | length == 1) and .items[0].issuer == $issuer and
+  .items[0].credentialType > $first and (.items[0] | has("credentialCount") | not)
 ' >/dev/null
 
 for family in credentials registered-credentials; do

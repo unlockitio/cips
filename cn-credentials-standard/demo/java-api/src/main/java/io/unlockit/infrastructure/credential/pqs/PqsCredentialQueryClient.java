@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agroal.api.AgroalDataSource;
 import io.unlockit.domain.credential.exception.PqsUnavailableException;
+import io.unlockit.application.credential.dto.CredentialTypeItem;
 import io.unlockit.domain.credential.model.Credential;
 import io.unlockit.domain.credential.model.CredentialRegistryFactory;
 import io.unlockit.domain.credential.model.RegisteredCredential;
@@ -77,6 +78,64 @@ public class PqsCredentialQueryClient implements CredentialQueryClient {
        order by f.contract_id
       """;
   static final String READINESS_SQL = "select 1 from active(?) limit 0";
+
+  static String credentialTypesSql(String state, boolean registered) {
+    String source = state.equals("active") ? "active(?)" : historySource(state);
+    return "with credentials as (select * from " + source + ")"
+        + (registered ? ", registrations as (select * from " + source + ")" : "")
+        + " select c.payload -> 'issuer' ->> 'value' as issuer, t.credential_type,"
+        + " min(c.created_effective_at) as first_observed_at,"
+        + " max(c.created_effective_at) as last_observed_at"
+        + " from credentials c"
+        + (registered ? " join registrations r on c.contract_id = r.contract_id"
+            + " and c.create_event_id = r.create_event_id"
+            + " and c.created_at_offset = r.created_at_offset and c.created_at_ix = r.created_at_ix"
+            + (state.equals("archived") ? " and c.archive_event_id = r.archive_event_id"
+                + " and c.archived_at_offset = r.archived_at_offset and c.archived_at_ix = r.archived_at_ix"
+                : state.equals("all") ? " and ((c.archive_event_id is null and r.archive_event_id is null"
+                    + " and c.archived_at_offset is null and r.archived_at_offset is null"
+                    + " and c.archived_at_ix is null and r.archived_at_ix is null)"
+                    + " or (c.archive_event_id = r.archive_event_id"
+                    + " and c.archived_at_offset = r.archived_at_offset and c.archived_at_ix = r.archived_at_ix))" : "")
+            : "")
+        + " cross join lateral (select distinct value as credential_type"
+        + " from jsonb_array_elements_text(c.payload -> 'credentialTypes') as types(value)) t"
+        + " where (?::boolean or c.payload -> 'issuer' ->> 'value' = any (?::text[]))"
+        + (registered ? " and r.payload ->> 'registryAdmin' = ?::text" : "")
+        + " group by issuer, t.credential_type order by issuer, t.credential_type limit ? offset ?";
+  }
+
+  @Override
+  public List<CredentialTypeItem> findCredentialTypes(List<String> issuers, String registryAdmin,
+      String state, long offset, int limit) {
+    String sql = credentialTypesSql(state, registryAdmin != null);
+    long offsetAtRequest = state.equals("active") ? 0 : latestOffset();
+    try (Connection connection = dataSource.getConnection();
+        PreparedStatement statement = connection.prepareStatement(sql)) {
+      int index = 1;
+      statement.setString(index++, CREDENTIAL_INTERFACE);
+      if (!state.equals("active")) statement.setLong(index++, offsetAtRequest);
+      if (registryAdmin != null) {
+        statement.setString(index++, REGISTERED_CREDENTIAL_INTERFACE);
+        if (!state.equals("active")) statement.setLong(index++, offsetAtRequest);
+      }
+      statement.setBoolean(index++, issuers.isEmpty());
+      statement.setArray(index++, connection.createArrayOf("text", issuers.toArray(String[]::new)));
+      if (registryAdmin != null) statement.setString(index++, registryAdmin);
+      statement.setInt(index++, limit);
+      statement.setLong(index, offset);
+      List<CredentialTypeItem> items = new ArrayList<>();
+      try (ResultSet rows = statement.executeQuery()) {
+        while (rows.next()) {
+          items.add(new CredentialTypeItem(rows.getString("issuer"), rows.getString("credential_type"),
+              timestamp(rows, "first_observed_at"), timestamp(rows, "last_observed_at")));
+        }
+      }
+      return items;
+    } catch (SQLException exception) {
+      throw new PqsUnavailableException(exception);
+    }
+  }
 
   private final AgroalDataSource dataSource;
   private final ObjectMapper objectMapper;

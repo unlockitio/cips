@@ -204,6 +204,106 @@ class PqsCredentialQueryClientTest {
   }
 
   @Test
+  void credentialTypeSqlUsesPublicReadersAndCompatibleRegistration() {
+    for (String state : java.util.List.of("active", "archived", "all")) {
+      String intrinsic = PqsCredentialQueryClient.credentialTypesSql(state, false);
+      String registered = PqsCredentialQueryClient.credentialTypesSql(state, true);
+      assertTrue(intrinsic.contains(state.equals("active") ? "active(?)"
+          : PqsCredentialQueryClient.historySource(state)));
+      assertTrue(intrinsic.contains("jsonb_array_elements_text"));
+      assertTrue(intrinsic.contains("select distinct value"));
+      assertTrue(intrinsic.contains("min(c.created_effective_at)"));
+      assertTrue(intrinsic.contains("max(c.created_effective_at)"));
+      assertTrue(intrinsic.contains("= any (?::text[])"));
+      assertTrue(intrinsic.contains("group by issuer, t.credential_type order by issuer, t.credential_type limit ? offset ?"));
+      assertFalse(intrinsic.contains("join registrations"));
+      assertFalse(intrinsic.contains("__"));
+      assertTrue(registered.contains("c.contract_id = r.contract_id"));
+      assertTrue(registered.contains("c.create_event_id = r.create_event_id"));
+      assertTrue(registered.contains("c.created_at_offset = r.created_at_offset"));
+      assertTrue(registered.contains("r.payload ->> 'registryAdmin' = ?::text"));
+      if (state.equals("archived")) assertTrue(registered.contains("c.archive_event_id = r.archive_event_id"));
+      if (state.equals("all")) assertTrue(registered.contains("c.archive_event_id is null and r.archive_event_id is null"));
+      assertFalse(registered.contains("__"));
+    }
+  }
+
+  @Test
+  void bindsIssuerArrayRegistrationAndLookaheadAndMapsTimes() throws Exception {
+    AgroalDataSource source = mock(AgroalDataSource.class);
+    Connection connection = mock(Connection.class);
+    PreparedStatement statement = mock(PreparedStatement.class);
+    ResultSet rows = mock(ResultSet.class);
+    java.sql.Array issuers = mock(java.sql.Array.class);
+    when(source.getConnection()).thenReturn(connection);
+    when(connection.prepareStatement(PqsCredentialQueryClient.credentialTypesSql("active", true)))
+        .thenReturn(statement);
+    when(connection.createArrayOf(org.mockito.ArgumentMatchers.eq("text"),
+        org.mockito.ArgumentMatchers.any())).thenReturn(issuers);
+    when(statement.executeQuery()).thenReturn(rows);
+    when(rows.next()).thenReturn(true, false);
+    when(rows.getString("issuer")).thenReturn("alice");
+    when(rows.getString("credential_type")).thenReturn("DemoType");
+    when(rows.getTimestamp("first_observed_at")).thenReturn(java.sql.Timestamp.from(java.time.Instant.parse("2026-01-01T00:00:00Z")));
+    when(rows.getTimestamp("last_observed_at")).thenReturn(java.sql.Timestamp.from(java.time.Instant.parse("2026-01-02T00:00:00Z")));
+    var result = new PqsCredentialQueryClient(source, new ObjectMapper())
+        .findCredentialTypes(java.util.List.of("alice", "bob"), "admin", "active", 100, 51);
+    assertEquals("alice", result.getFirst().issuer());
+    assertEquals("DemoType", result.getFirst().credentialType());
+    assertEquals("2026-01-01T00:00:00Z", result.getFirst().firstObservedAt());
+    assertEquals("2026-01-02T00:00:00Z", result.getFirst().lastObservedAt());
+    verify(statement).setString(1, PqsCredentialQueryClient.CREDENTIAL_INTERFACE);
+    verify(statement).setString(2, PqsCredentialQueryClient.REGISTERED_CREDENTIAL_INTERFACE);
+    verify(statement).setBoolean(3, false);
+    verify(statement).setArray(4, issuers);
+    verify(statement).setString(5, "admin");
+    verify(statement).setInt(6, 51);
+    verify(statement).setLong(7, 100);
+    org.mockito.ArgumentCaptor<Object[]> values = org.mockito.ArgumentCaptor.forClass(Object[].class);
+    verify(connection).createArrayOf(org.mockito.ArgumentMatchers.eq("text"), values.capture());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(new String[] {"alice", "bob"}, values.getValue());
+  }
+
+  @Test
+  void aggregateRelationalAnalogueGroupsMultipleTypesAndScopedRegistration() throws Exception {
+    try (var connection = java.sql.DriverManager.getConnection("jdbc:h2:mem:credentialTypes")) {
+      var setup = connection.createStatement();
+      setup.execute("create table credentials(cid varchar, issuer varchar, observed timestamp, state varchar)");
+      setup.execute("create table types(cid varchar, credential_type varchar)");
+      setup.execute("create table registrations(cid varchar, admin varchar)");
+      setup.execute("insert into credentials values ('c1','alice',timestamp '2026-01-01 00:00:00','active'),"
+          + "('c2','alice',timestamp '2026-01-03 00:00:00','archived'),"
+          + "('c3','bob',timestamp '2026-01-02 00:00:00','active')");
+      setup.execute("insert into types values ('c1','VerifiableCredential'),('c1','DemoType'),"
+          + "('c1','DemoType'),('c2','VerifiableCredential'),('c2','DemoType'),('c3','DemoType')");
+      setup.execute("insert into registrations values ('c1','admin'),('c2','other'),('c3','admin')");
+      String sql = "select c.issuer, t.credential_type, min(c.observed) first_at, max(c.observed) last_at"
+          + " from credentials c join (select distinct cid, credential_type from types) t on c.cid=t.cid"
+          + " where c.state=? and (? is null or c.issuer=?)"
+          + " and (? is null or exists (select 1 from registrations r where r.cid=c.cid and r.admin=?))"
+          + " group by c.issuer,t.credential_type order by c.issuer,t.credential_type limit ? offset ?";
+      try (var statement = connection.prepareStatement(sql)) {
+        statement.setString(1, "active");
+        statement.setString(2, "alice"); statement.setString(3, "alice");
+        statement.setString(4, "admin"); statement.setString(5, "admin");
+        statement.setInt(6, 3); statement.setLong(7, 0);
+        try (var rows = statement.executeQuery()) {
+          assertTrue(rows.next()); assertEquals("DemoType", rows.getString("credential_type"));
+          assertEquals("2026-01-01T00:00:00Z", rows.getTimestamp("first_at").toInstant().toString());
+          assertTrue(rows.next()); assertEquals("VerifiableCredential", rows.getString("credential_type"));
+          assertFalse(rows.next());
+        }
+        statement.setString(1, "archived");
+        statement.setString(4, null); statement.setString(5, null);
+        try (var rows = statement.executeQuery()) {
+          assertTrue(rows.next()); assertEquals("DemoType", rows.getString("credential_type"));
+          assertTrue(rows.next()); assertFalse(rows.next());
+        }
+      }
+    }
+  }
+
+  @Test
   void historySqlUsesSnapshotFunctionsCompatibleEventsAndAllFilters() {
     assertEquals("active(?::text, ?::bigint)", PqsCredentialQueryClient.historySource("active"));
     assertEquals("archives(?::text, oldest_offset(), ?::bigint)", PqsCredentialQueryClient.historySource("archived"));

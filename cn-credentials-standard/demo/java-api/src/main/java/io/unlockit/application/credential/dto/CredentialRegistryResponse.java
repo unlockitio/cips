@@ -1,5 +1,6 @@
 package io.unlockit.application.credential.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 public record CredentialRegistryResponse(
@@ -15,5 +16,16 @@ public record CredentialRegistryResponse(
       String[] supportedLifecycleScopes,
       String[] supportedFilters,
       int defaultPageSize,
-      int maximumPageSize) {}
+      int maximumPageSize,
+      @JsonInclude(JsonInclude.Include.NON_NULL) CredentialTypeAggregationCapability credentialTypeAggregation) {
+    public FamilyCapabilities(boolean activeRecords, boolean inactiveRecords, boolean eventHistory,
+        String[] supportedLifecycleScopes, String[] supportedFilters, int defaultPageSize,
+        int maximumPageSize) {
+      this(activeRecords, inactiveRecords, eventHistory, supportedLifecycleScopes, supportedFilters,
+          defaultPageSize, maximumPageSize, null);
+    }
+  }
+
+  public record CredentialTypeAggregationCapability(boolean supported, String[] supportedFilters,
+      boolean credentialCount) {}
 }

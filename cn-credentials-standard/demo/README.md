@@ -109,6 +109,7 @@ For seeded GET examples across the Credentials and DID demos, and separately opt
 - `GET /v1/registered-credentials?page=0&pageSize=50`
 - `GET /v1/credential-registries?page=0&pageSize=50`
 - `GET /v1/credential-registries/{registryId}`
+- `GET /v1/credential-types?issuer=<issuer>&page=0&pageSize=50`
 - `GET /v1/resolve?name=alice.canton&network=localnet&source=credential`
 - `GET /v1/reverse-resolve?party=<Party ID>&network=localnet&source=credential`
 - `GET /q/health/live`
@@ -121,5 +122,7 @@ Ports 41003–41006 expose four logical Credentials API instances, all reading t
 Both credential collections support `state=active|archived|all`, four effective-time bounds (`createdFrom`, `createdUntil`, `archivedFrom`, `archivedUntil`), `issuer`, `holder`, `credentialSubjectId`, and literal claim `keyPrefix`; registered credentials additionally support `registryAdmin`. From bounds are inclusive, Until bounds exclusive. `keyPrefix` matches claim keys within a single `CredentialSubject`, and combined with `credentialSubjectId` both must hold on the same subject, so a subject in one credential never matches a claim key carried by a different subject. Ledger archival is independent of semantic validity or registry expiry.
 
 The API uses only PQS 3.5 public snapshot readers through prepared JDBC statements. Fresh pages capture a bigint snapshot; responses include `snapshotOffset` and `nextPageToken`. Repeat filters and pageSize with a token: token alone continues by keyset, token plus page jumps within the same snapshot. Fresh page requests choose a new snapshot. Tokens expire after `CREDENTIALS_PAGINATION_TTL_SECONDS` (900 by default); configure a shared `CREDENTIALS_PAGINATION_SECRET` of at least 32 UTF-8 bytes. Compose's fallback secret is for local demos only.
+
+`/v1/credential-types` aggregates exposed intrinsic Credential projections by exact issuer string and each type (including `VerifiableCredential`), with earliest/latest creation effective times. Repeat `issuer` for exact alternatives; `registryAdmin` restricts to matching RegisteredCredential contracts; `state=active|archived|all` defaults to active. The intrinsic family advertises this aggregation and these three filters; counts are not exposed. As with registry discovery, zero-based pages use default 50, maximum 100, bounded lookahead and current-view offset pagination without snapshot tokens; concurrent issuance or archival can shift pages. Aggregates reveal observed activity, not issuer authenticity or an offer to issue; deployment visibility and PQS lag apply. Credential-record collection snapshot pagination remains separate.
 
 Singular `active` lookup rejects duplicate active IDs with 409. `archived` returns the latest creation position; `all` prefers active and otherwise the latest archived record. Missing records return 404; invalid filters/tokens or unavailable snapshots return 400; PQS failures return 503. Registry-list offset pagination and separate unsupported event-history endpoints are unchanged.

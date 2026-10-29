@@ -21,7 +21,9 @@ public class CredentialRegistryManager {
       "issuer", "holder", "credentialSubjectId", "keyPrefix"};
   private static final CredentialRegistryResponse.FamilyCapabilities CAPABILITIES =
       new CredentialRegistryResponse.FamilyCapabilities(
-          true, true, false, STATES, FILTERS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+           true, true, false, STATES, FILTERS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+           new CredentialRegistryResponse.CredentialTypeAggregationCapability(
+               true, new String[] {"issuer", "registryAdmin", "state"}, false));
   private static final CredentialRegistryResponse.FamilyCapabilities REGISTERED_CAPABILITIES =
       new CredentialRegistryResponse.FamilyCapabilities(true, true, false, STATES,
           java.util.stream.Stream.concat(java.util.Arrays.stream(FILTERS), java.util.stream.Stream.of("registryAdmin"))

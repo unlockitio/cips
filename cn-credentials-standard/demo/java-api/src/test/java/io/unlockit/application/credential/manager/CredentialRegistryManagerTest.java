@@ -42,6 +42,9 @@ class CredentialRegistryManagerTest {
     var registry = manager.findByRegistryId("admin");
 
     assertEquals("admin", registry.registryId());
+    assertEquals(true, registry.credentials().credentialTypeAggregation().supported());
+    assertEquals(false, registry.credentials().credentialTypeAggregation().credentialCount());
+    assertEquals(null, registry.registeredCredentials().credentialTypeAggregation());
     assertEquals("contract-a", registry.issuanceFactories().get(0).contractId());
     assertEquals("contract-b", registry.issuanceFactories().get(1).contractId());
     assertEquals("contract-c", registry.issuanceFactories().get(2).contractId());

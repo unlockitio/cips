@@ -220,9 +220,53 @@ for family in ("credentials", "registered-credentials"):
     route(f"Credentials {family} first page", f"Read the default first page of {family} records from PQS.",
           "Pagination beyond this page or complete historical coverage.", credential_url + "/v1/" + family,
            lambda body: isinstance(body, dict) and body.get("page") == 0 and body.get("pageSize") == 50 and isinstance(body.get("items"), list) and len(body["items"]) == 50 and all("verification" not in item and "schemaValidation" not in item for item in body["items"]))
-route("Credentials registry by ID", "Read the DSO credential registry using the registry ID returned by the live list.",
-      "Another registry or independent datastore.", credential_url + "/v1/credential-registries/" + quote(dso, safe=""),
-      lambda body: isinstance(body, dict) and body.get("registryId") == dso)
+def type_page(body, page, page_size, expected_issuer=None):
+    if (not isinstance(body, dict) or body.get("page") != page or body.get("pageSize") != page_size
+            or type(body.get("hasNext")) is not bool or not isinstance(body.get("items"), list)
+            or any(key in body for key in ("credentialCount", "snapshotOffset", "nextPageToken"))):
+        return False
+    items = body["items"]
+    return (len(items) <= page_size
+            and all(isinstance(item, dict) and isinstance(item.get("issuer"), str)
+                    and isinstance(item.get("credentialType"), str)
+                    and isinstance(item.get("firstObservedAt"), str)
+                    and isinstance(item.get("lastObservedAt"), str)
+                    and "credentialCount" not in item
+                    and (expected_issuer is None or item["issuer"] == expected_issuer) for item in items)
+            and [(item["issuer"], item["credentialType"]) for item in items]
+            == sorted((item["issuer"], item["credentialType"]) for item in items))
+
+registry_detail = capture(credential_url + "/v1/credential-registries/" + quote(dso, safe=""))
+capability = registry_detail[4].get("credentials", {}).get("credentialTypeAggregation", {})
+if (registry_detail[4].get("registryId") != dso or capability.get("supported") is not True
+        or capability.get("credentialCount") is not False
+        or sorted(capability.get("supportedFilters", [])) != ["issuer", "registryAdmin", "state"]):
+    raise RuntimeError("DSO registry credential-type capability differs from the supported route")
+extra.append(("Credentials registry by ID", "Read the DSO credential registry and its credential-type aggregation capability.",
+              "Another registry or independent datastore; the optional capability is not issuer authentication.", registry_detail))
+seeded = capture(credential("urn:demo:credential:000"))[4]["credential"]
+seeded_issuer = seeded["issuer"]
+seeded_types = seeded["type"]
+route("Credential types default", "Read active issuer/type aggregation with the default page shape and ordered pairs.",
+      "Total historical count, snapshot consistency, issuer authenticity or an offer to issue.",
+      credential_url + "/v1/credential-types",
+      lambda body: type_page(body, 0, 50) and bool(body["items"]))
+filtered_url = credential_url + "/v1/credential-types?" + urlencode({"issuer": seeded_issuer})
+route("Credential types issuer filter", "Read exact issuer/type aggregation for the seeded credential issuer.",
+      "Other issuers, identity validation or a complete snapshot of later pages.", filtered_url,
+      lambda body: type_page(body, 0, 50, seeded_issuer)
+      and set(seeded_types).issubset({item["credentialType"] for item in body["items"]}))
+first_type = capture(filtered_url + "&page=0&pageSize=1")
+if not (type_page(first_type[4], 0, 1, seeded_issuer) and len(first_type[4]["items"]) == 1
+        and first_type[4]["hasNext"] is True):
+    raise RuntimeError("Credential-type page zero lacks a seeded next pair")
+extra.append(("Credential types issuer page zero", "Read the first ordered issuer/type pair with pageSize=1 and hasNext.",
+              "A stable snapshot or a total group count.", first_type))
+first_pair = first_type[4]["items"][0]["credentialType"]
+route("Credential types issuer page one", "Read the next ordered issuer/type pair by offset.",
+      "Stable continuation under concurrent PQS changes or a total group count.", filtered_url + "&page=1&pageSize=1",
+      lambda body: type_page(body, 1, 1, seeded_issuer) and len(body["items"]) == 1
+      and body["items"][0]["credentialType"] > first_pair)
 for family in ("credential-events", "registered-credential-events"):
     route(f"Credentials {family} unsupported", "Observe the actual unsupported-history response (expected HTTP 422).",
           "Historical events or a working event-history capability.", credential_url + "/v1/" + family,
