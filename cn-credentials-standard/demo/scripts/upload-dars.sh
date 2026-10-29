@@ -4,8 +4,8 @@ set -eu
 JSON_API_URL=${JSON_API_URL:-http://credential-canton:7575}
 
 for dar in \
-  /artifacts/canton-network-credentials-interfaces-v2-0.3.0.dar \
-  /artifacts/canton-network-credentials-demo-v2-0.2.0.dar
+  /artifacts/canton-network-credentials-interfaces-0.2.0.dar \
+  /artifacts/canton-network-credentials-demo-0.1.0.dar
 do
   [ -f "$dar" ] || {
     printf '%s\n' "DAR is missing from the credential artifact volume: $dar" >&2
